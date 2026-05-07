@@ -12,10 +12,10 @@ def search_similar_issues(query):
     sql = text("""
         SELECT
             issue_key,
-            summary,
-            description,
+            chunk_type,
+            content,
             embedding <-> CAST(:embedding AS vector) AS distance
-        FROM jira_vectors
+        FROM jira_knowledge_chunks
         ORDER BY distance
         LIMIT 5;
     """)
