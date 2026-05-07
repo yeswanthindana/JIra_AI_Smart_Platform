@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text
+from sqlalchemy import Column, Integer, String, Text, UniqueConstraint
 from pgvector.sqlalchemy import Vector
 
 from app.database import Base

@@ -9,6 +9,8 @@ import os
 from app.rag.advanced_index_jira import store_chunk
 
 # ------------------------------------------------
+# JIRA CONNECTION
+# ------------------------------------------------
 
 jira = JIRA(
     server=os.getenv("JIRA_URL"),
@@ -19,107 +21,211 @@ jira = JIRA(
 )
 
 # ------------------------------------------------
+# CONFIG
+# ------------------------------------------------
 
 PROJECT_KEY = "EVR"
 
-START_AT = 0
-MAX_RESULTS = 200
+MAX_RESULTS = 50
 
+NEXT_PAGE_TOKEN = None
+
+# ------------------------------------------------
+# MAIN LOOP
 # ------------------------------------------------
 
 while True:
 
-    print(f"\nFetching Jira tickets from {START_AT}")
+    print("\nFetching Jira tickets...")
 
-    issues = jira.search_issues(
-        f'project={PROJECT_KEY}',
-        maxResults=MAX_RESULTS
-    )
+    try:
 
-    if not issues:
-        print("No more tickets.")
-        break
+        # ----------------------------------------
+        # FETCH ISSUES
+        # ----------------------------------------
 
-    for issue in issues:
+        issues_response = jira.enhanced_search_issues(
+            jql_str=f'project={PROJECT_KEY} ORDER BY created DESC',
+            maxResults=MAX_RESULTS,
+            nextPageToken=NEXT_PAGE_TOKEN
+        )
 
-        try:
+        # Handle different return types (dict vs list)
+        if isinstance(issues_response, dict):
+            issues = issues_response.get("issues", [])
+        elif isinstance(issues_response, list):
+            issues = issues_response
+        else:
+            print(f"Unexpected response type: {type(issues_response)}")
+            issues = []
 
-            issue_key = issue.key
+        # ----------------------------------------
+        # STOP IF EMPTY
+        # ----------------------------------------
 
-            summary = str(issue.fields.summary)
+        if not issues:
 
-            description = str(issue.fields.description)
+            print("\nNo more Jira tickets.")
 
-            status = str(issue.fields.status)
+            break
 
-            assignee = str(issue.fields.assignee)
+        print(f"Fetched {len(issues)} issues")
 
-            priority = str(issue.fields.priority)
+        # ----------------------------------------
+        # PROCESS EACH ISSUE
+        # ----------------------------------------
 
-            labels = ", ".join(issue.fields.labels)
+        for issue in issues:
 
-            # ------------------------------------------------
-            # STORE SUMMARY
-            # ------------------------------------------------
+            try:
 
-            store_chunk(
-                issue_key,
-                "summary",
-                summary
-            )
+                issue_key = issue.key
 
-            # ------------------------------------------------
-            # STORE DESCRIPTION
-            # ------------------------------------------------
+                print(f"\nProcessing {issue_key}")
 
-            store_chunk(
-                issue_key,
-                "description",
-                description
-            )
+                # --------------------------------
+                # BASIC FIELDS
+                # --------------------------------
 
-            # ------------------------------------------------
-            # STORE METADATA
-            # ------------------------------------------------
+                summary = str(
+                    issue.fields.summary or ""
+                )
 
-            metadata = f"""
-            Status: {status}
+                description = str(
+                    issue.fields.description or ""
+                )
 
-            Assignee: {assignee}
+                status = str(
+                    issue.fields.status or ""
+                )
 
-            Priority: {priority}
+                assignee = str(
+                    issue.fields.assignee or ""
+                )
 
-            Labels: {labels}
-            """
+                priority = str(
+                    issue.fields.priority or ""
+                )
 
-            store_chunk(
-                issue_key,
-                "metadata",
-                metadata
-            )
+                labels = ", ".join(
+                    issue.fields.labels or []
+                )
 
-            # ------------------------------------------------
-            # STORE COMMENTS
-            # ------------------------------------------------
-
-            comments = issue.fields.comment.comments
-
-            for c in comments:
-
-                comment_body = str(c.body)
+                # --------------------------------
+                # STORE SUMMARY
+                # --------------------------------
 
                 store_chunk(
                     issue_key,
-                    "comment",
-                    comment_body
+                    "summary",
+                    summary
                 )
 
-        except Exception as e:
+                # --------------------------------
+                # STORE DESCRIPTION
+                # --------------------------------
 
-            print(f"Failed: {issue.key}")
+                store_chunk(
+                    issue_key,
+                    "description",
+                    description
+                )
 
-            print(e)
+                # --------------------------------
+                # STORE METADATA
+                # --------------------------------
 
-    START_AT += MAX_RESULTS
+                metadata = f"""
+                Status: {status}
+
+                Assignee: {assignee}
+
+                Priority: {priority}
+
+                Labels: {labels}
+                """
+
+                store_chunk(
+                    issue_key,
+                    "metadata",
+                    metadata
+                )
+
+                # --------------------------------
+                # STORE COMMENTS
+                # --------------------------------
+
+                try:
+
+                    comments = (
+                        issue.fields.comment.comments
+                    )
+
+                    for c in comments:
+
+                        comment_body = str(
+                            c.body or ""
+                        )
+
+                        store_chunk(
+                            issue_key,
+                            "comment",
+                            comment_body
+                        )
+
+                except Exception as comment_error:
+
+                    print(
+                        f"Comment fetch failed "
+                        f"for {issue_key}"
+                    )
+
+                    print(comment_error)
+
+            except Exception as issue_error:
+
+                print(
+                    f"Failed processing "
+                    f"{issue.key}"
+                )
+
+                print(issue_error)
+
+        # ----------------------------------------
+        # NEXT PAGE TOKEN
+        # ----------------------------------------
+
+        if isinstance(issues_response, dict):
+            NEXT_PAGE_TOKEN = issues_response.get("nextPageToken")
+        else:
+            # It's a ResultList or list
+            print(f"DEBUG: issues_response properties: {dir(issues_response)}")
+            # Try to see if it has a nextPageToken attribute
+            NEXT_PAGE_TOKEN = getattr(issues_response, "nextPageToken", None)
+            if not NEXT_PAGE_TOKEN:
+                # If we still don't have it, we might be done or need another way
+                print("DEBUG: nextPageToken not found in ResultList attributes")
+
+        # ----------------------------------------
+        # STOP IF NO MORE PAGES
+        # ----------------------------------------
+
+        if not NEXT_PAGE_TOKEN:
+
+            print("\nReached final page.")
+
+            break
+
+    except Exception as fetch_error:
+
+        print("\nJira fetch failed")
+
+        print(fetch_error)
+
+        break
+
+# ------------------------------------------------
+# DONE
+# ------------------------------------------------
 
 print("\nAdvanced Jira indexing completed.")

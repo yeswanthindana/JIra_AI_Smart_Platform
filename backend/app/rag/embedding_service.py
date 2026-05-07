@@ -7,8 +7,12 @@ embeddings = OllamaEmbeddings(model="all-minilm")
 def generate_embedding(text: str):
     """
     Generates a 384-dimensional embedding for the given text using Ollama.
+    Truncates text to avoid context length errors.
     """
-    return embeddings.embed_query(text)
+    # Truncate to a safe limit (e.g., 4000 chars)
+    # Most embedding models have a token limit, 4000 chars is usually safe
+    truncated_text = text[:4000] if text else ""
+    return embeddings.embed_query(truncated_text)
 
 
 # from sentence_transformers import SentenceTransformer
