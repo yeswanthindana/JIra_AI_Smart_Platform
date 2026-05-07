@@ -1,0 +1,21 @@
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: qa_postgres
+    restart: always
+
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: qa_ai
+
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    container_name: qa_redis
+
+    ports:
+      - "6379:6379"
