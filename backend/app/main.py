@@ -1,13 +1,20 @@
 from fastapi import FastAPI
 from app.integrations.jira_client import *
 from app.services.testcase_generator import generate_testcases
+from app.api.routes.ai_chat import router as ai_router
 
 app = FastAPI()
 
-@app.get("/")
-def health():
-    return {"status":"Running"}
+app.include_router(ai_router)
 
+# @app.get("/")
+# def health():
+#     return {"status":"Running"}
+
+
+@app.get("/")
+def home():
+    return {"message": "AI Platform Running"}
 
 @app.get("/jira/{issue_key}")
 def read_ticket(issue_key: str):
