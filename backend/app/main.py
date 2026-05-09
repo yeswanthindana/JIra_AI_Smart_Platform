@@ -2,8 +2,25 @@ from fastapi import FastAPI
 from app.integrations.jira_client import *
 from app.services.testcase_generator import generate_testcases
 from app.api.routes.ai_chat import router as ai_router
+from fastapi.middleware.cors import (
+    CORSMiddleware
+)
+
 
 app = FastAPI()
+
+app.add_middleware(
+
+    CORSMiddleware,
+
+    allow_origins=["*"],
+
+    allow_credentials=True,
+
+    allow_methods=["*"],
+
+    allow_headers=["*"],
+)
 
 app.include_router(ai_router)
 
