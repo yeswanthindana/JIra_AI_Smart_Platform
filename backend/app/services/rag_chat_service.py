@@ -81,7 +81,10 @@ def ask_rag(question):
     # AI RESPONSE
     # --------------------------------------------
 
-    response = llm.invoke(prompt)
+    # response = llm.invoke(prompt)
 
-    return response
+    # return response
+    for chunk in llm.stream(prompt):
+
+        yield chunk
   
