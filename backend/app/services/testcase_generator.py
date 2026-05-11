@@ -1,4 +1,4 @@
-from app.services.ai_provider import llm, add_ai_stamp
+import app.services.ai_provider as ai_provider
 from app.rag.search_service import search_similar_issues
 
 # from langchain_ollama import OllamaLLM

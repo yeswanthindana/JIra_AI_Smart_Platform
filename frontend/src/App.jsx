@@ -1,26 +1,24 @@
 import { useState, useEffect, useRef } from "react";
+import ReactMarkdown from "react-markdown";
 import "./App.css";
 
 function App() {
-  const [activeTab, setActiveTab] = useState("chat");
   const [messages, setMessages] = useState([
     {
       role: "ai",
-      content: "Hello! I am your Jira RAG Service. I can analyze historical defects, predict regression risks, and help you with QA insights. How can I help you today?",
-      sources: []
+      content: "Hello! I'm synchronized with your Jira project data. Whether you need a deep dive into a specific ticket or a high-level risk assessment across the board, I'm here to help. \n\nHow can I assist you today?",
+      meta: { model: "Strategic-AI", type: "greeting" }
     }
   ]);
   const [loading, setLoading] = useState(false);
-  const [systemInfo, setSystemInfo] = useState({
-    model: "Loading...",
-    vector_db: "Loading...",
-    source: "Loading...",
-    status: "Offline",
-    metrics: { cpu: "0%", ram: "0%", gpu: "N/A" }
-  });
-  const [currentInsight, setCurrentInsight] = useState(null);
+  const [systemInfo, setSystemInfo] = useState({ model: "GPT-Core", status: "Active", metrics: { cpu: "0%", ram: "0%", gpu: "0%" } });
   const [question, setQuestion] = useState("");
-  
+  const [chatContext, setChatContext] = useState({ type: 'global', issue_key: null, details: null });
+  const [activeTool, setActiveTool] = useState('analyzer');
+  const [isBugSidebarOpen, setIsBugSidebarOpen] = useState(false);
+  const [bugData, setBugData] = useState({ project: "EVR", summary: "", raw: "" });
+  const [isLoggingBug, setIsLoggingBug] = useState(false);
+
   const chatEndRef = useRef(null);
 
   useEffect(() => {
@@ -29,13 +27,8 @@ function App() {
 
   useEffect(() => {
     fetchSystemInfo();
-    fetchKnowledge();
-    const sysInterval = setInterval(fetchSystemInfo, 5000);
-    const knowInterval = setInterval(fetchKnowledge, 15000);
-    return () => {
-      clearInterval(sysInterval);
-      clearInterval(knowInterval);
-    };
+    const interval = setInterval(fetchSystemInfo, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   const fetchSystemInfo = async () => {
@@ -44,202 +37,290 @@ function App() {
       const data = await res.json();
       setSystemInfo(data);
     } catch (err) {
-      console.error(err);
-      setSystemInfo(prev => ({ ...prev, status: "Error" }));
+      setSystemInfo(prev => ({ ...prev, status: "Offline" }));
     }
   };
 
-  const fetchKnowledge = async () => {
-    try {
-      const res = await fetch("http://localhost:8000/ai-knowledge");
-      const data = await res.json();
-      if (data.status === "success") setCurrentInsight(data.data);
-      else setCurrentInsight(null);
-    } catch (err) {
-      console.error(err);
-      setCurrentInsight(null);
-    }
-  };
+  const askAI = async (manualQuestion = null, overrideContext = null) => {
+    const q = manualQuestion || question;
+    const currentContext = overrideContext || chatContext;
+    if (!q.trim() || loading) return;
 
-  const askAI = async () => {
-    if (!question.trim() || loading) return;
-    const userMsg = { role: "user", content: question };
-    setMessages(prev => [...prev, userMsg]);
-    const q = question;
-    setQuestion("");
+    if (!manualQuestion) {
+      setMessages(prev => [...prev, { role: "user", content: q }]);
+      setQuestion("");
+    }
+    
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:8000/ask-ai", {
+      let endpoint = "http://localhost:8000/ask-ai";
+      let payload = { question: q };
+
+      if (currentContext.type === 'ticket') {
+        endpoint = "http://localhost:8000/chat/ticket";
+        payload = {
+          issue_key: currentContext.issue_key,
+          question: q,
+          ticket_details: JSON.stringify(currentContext.details)
+        };
+      }
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
-      setMessages(prev => [...prev, { role: "ai", content: data.answer, sources: data.sources || [] }]);
+      setMessages(prev => [...prev, { 
+        role: "ai", 
+        content: data.answer, 
+        sources: data.sources || [],
+        meta: { model: systemInfo.model, status: "Analyzed" }
+      }]);
     } catch (err) {
-      setMessages(prev => [...prev, { role: "ai", content: "Error connecting to backend.", sources: [] }]);
+      setMessages(prev => [...prev, { role: "ai", content: "I encountered a connection error. Please ensure the backend services are operational." }]);
     } finally {
       setLoading(false);
     }
   };
 
+  const setChatToTicket = async (issue_key, details) => {
+    const newContext = { type: 'ticket', issue_key, details };
+    setChatContext(newContext);
+    
+    setMessages([
+      {
+        role: "ai",
+        content: `I've loaded the details for **${issue_key}**: *${details.summary}*. \n\nI'm performing an initial assessment now. One moment...`,
+        meta: { model: systemInfo.model, status: "Syncing" }
+      }
+    ]);
+
+    const initialPrompt = `Provide a comprehensive breakdown of ${issue_key}. I need a clear summary, a list of identified risks, and a structured set of testing scenarios for QA. Format your response clearly.`;
+    await askAI(initialPrompt, newContext);
+  };
+
+  const resetChat = () => {
+    setChatContext({ type: 'global', issue_key: null, details: null });
+    setMessages([
+      {
+        role: "ai",
+        content: "I've reset to the global project context. I'm ready to analyze patterns across your entire workspace. What's on your mind?",
+        meta: { model: systemInfo.model, status: "Ready" }
+      }
+    ]);
+  };
+
+  const addAsComment = async (issueKey, text) => {
+    if (!window.confirm(`Would you like to sync this part of our conversation to ${issueKey}?`)) return;
+    try {
+      await fetch(`http://localhost:8000/jira/tickets/${issueKey}/comment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
+      });
+      alert("Successfully added as a comment to Jira.");
+    } catch (err) {
+      alert("There was an error syncing with Jira.");
+    }
+  };
+
   return (
-    <div className="app-container">
-      <aside className="sidebar">
-        <div className="logo-container">
-          <div className="logo-icon">AI</div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>Jira RAG Service</div>
-            <div style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>Enterprise AI Engine</div>
-          </div>
+    <div className="chatgpt-inspired-shell">
+      {/* SIDEBAR */}
+      <aside className="chat-sidebar">
+        <div className="sidebar-header">
+           <div className="sidebar-logo">J</div>
+           <button className="new-chat-btn" onClick={resetChat}>+ New Session</button>
         </div>
 
-        <nav style={{ flex: 1 }}>
-          <SidebarNavItem icon="💬" label="AI Assistant" active={activeTab === "chat"} onClick={() => setActiveTab("chat")} />
-          <SidebarNavItem icon="🧪" label="Test Case Generator" active={activeTab === "testcase"} onClick={() => setActiveTab("testcase")} />
-          <SidebarNavItem icon="🔎" label="Search Similar Issues" active={activeTab === "search"} onClick={() => setActiveTab("search")} />
-          <SidebarNavItem icon="⚠️" label="Risk Analysis" active={activeTab === "risk"} onClick={() => setActiveTab("risk")} />
-        </nav>
+        <div className="sidebar-section">
+           <label>Project Utilities</label>
+           <button className="sidebar-link" onClick={() => setIsBugSidebarOpen(true)}>
+              <span className="icon">🐞</span> Log Bug in Jira
+           </button>
+        </div>
 
-        {currentInsight && (
-          <div className="stat-card" style={{ marginBottom: "1rem", background: "rgba(139, 92, 246, 0.1)", border: "1px solid rgba(139, 92, 246, 0.2)" }}>
-            <span className="stat-label">LLM INSIGHT HUB</span>
-            <div key={currentInsight.topic} style={{ animation: "fadeIn 0.5s ease-in-out" }}>
-              <div style={{ fontWeight: 700, color: "var(--accent-secondary)", fontSize: "0.9rem", marginBottom: "4px" }}>{currentInsight.topic}</div>
-              <div style={{ fontSize: "0.75rem", opacity: 0.8, lineHeight: "1.4" }}>{currentInsight.description}</div>
-              <div style={{ fontSize: "0.7rem", marginTop: "8px", fontStyle: "italic", color: "var(--text-muted)" }}>🤖 {currentInsight.practical}</div>
-            </div>
-          </div>
-        )}
+        <div className="sidebar-history">
+           <label>Current Context</label>
+           <div className={`context-card ${chatContext.type === 'ticket' ? 'active' : ''}`}>
+              <div className="card-top">{chatContext.type === 'ticket' ? chatContext.issue_key : 'Global Project'}</div>
+              <div className="card-desc">{chatContext.type === 'ticket' ? chatContext.details.summary : 'Multi-ticket analysis enabled.'}</div>
+           </div>
+        </div>
 
-        <div className="stat-card" style={{ marginTop: "auto", background: "rgba(59, 130, 246, 0.05)", border: "1px solid var(--glass-border)" }}>
-          <span className="stat-label">HARDWARE USAGE</span>
-          <div style={{ fontSize: "0.75rem", marginTop: "5px" }}>
-            <div>CPU: {systemInfo.metrics?.cpu || "0%"}</div>
-            <div>RAM: {systemInfo.metrics?.ram || "0%"}</div>
-            <div>GPU: {systemInfo.metrics?.gpu || "N/A"}</div>
-          </div>
-          <span className="stat-value" style={{ color: systemInfo.status === "Healthy" ? "#4ade80" : "#fb7185", marginTop: "10px", display: "block" }}>
-            ● {systemInfo.status}
-          </span>
+        <div className="sidebar-footer">
+           <div className="system-pill">
+              <span className={`status-orb ${systemInfo.status === 'Active' ? 'online' : 'offline'}`}></span>
+              {systemInfo.model}
+           </div>
+           <div className="metrics-compact">
+              <span>CPU {systemInfo.metrics?.cpu}</span>
+              <span>RAM {systemInfo.metrics?.ram}</span>
+           </div>
         </div>
       </aside>
 
-      <main className="main-content">
-        <header className="header">
-          <div>
-            <h1 style={{ fontSize: "1.5rem", fontWeight: 700 }}>{activeTab.toUpperCase().replace("_", " ")}</h1>
-            <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Jira Knowledge RAG Service</p>
-          </div>
-          <div className="system-stats">
-            <TopStat label="MODEL" value={systemInfo.model} />
-            <TopStat label="VECTOR DB" value={systemInfo.vector_db} />
-          </div>
+      {/* MAIN CHAT AREA */}
+      <main className="chat-main">
+        <header className="chat-header">
+           <div className="header-info">
+              <h1>{chatContext.type === 'ticket' ? `Analyzing ${chatContext.issue_key}` : "Project Assistant"}</h1>
+              <div className="status-label">{loading ? "Thinking..." : "Ready to assist"}</div>
+           </div>
+           {chatContext.type === 'ticket' && (
+             <button className="btn-exit" onClick={resetChat}>Exit Ticket View</button>
+           )}
         </header>
 
-        <div className="content-view">
-          {activeTab === "chat" && <ChatView messages={messages} loading={loading} question={question} setQuestion={setQuestion} askAI={askAI} chatEndRef={chatEndRef} />}
-          {activeTab === "testcase" && <ToolView title="Test Case Generator" apiPath="/generate-testcases/" resultKey="testcases" placeholder="Enter Issue Key (e.g., EVR-123)" />}
-          {activeTab === "search" && <ToolView title="Search Similar Issues" apiPath="/jira/" resultKey="summary" placeholder="Enter Issue Key to find similar" isSearch />}
-          {activeTab === "risk" && <ToolView title="Risk Analysis" apiPath="/risk-analysis/" resultKey="analysis" placeholder="Enter Issue Key for Risk Analysis" />}
-        </div>
-      </main>
-    </div>
-  );
-}
-
-function SidebarNavItem({ icon, label, active, onClick }) {
-  return (
-    <div className={`nav-item ${active ? "active" : ""}`} onClick={onClick}>
-      <span>{icon}</span> {label}
-    </div>
-  );
-}
-
-function TopStat({ label, value }) {
-  return (
-    <div className="stat-card">
-      <span className="stat-label">{label}</span>
-      <span className="stat-value">{value}</span>
-    </div>
-  );
-}
-
-function ChatView({ messages, loading, question, setQuestion, askAI, chatEndRef }) {
-  return (
-    <>
-      <div className="chat-area">
-        {messages.map((msg, i) => (
-          <div key={i} className={`message ${msg.role}`}>
-            <div className="avatar">{msg.role === "ai" ? "🤖" : "👤"}</div>
-            <div className="message-content">
-              <div style={{ whiteSpace: "pre-wrap" }}>{msg.content}</div>
-              {msg.role === "ai" && msg.sources?.length > 0 && (
-                <div className="sources-container">
-                  <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-muted)", marginBottom: "0.5rem" }}>SOURCES:</div>
-                  {msg.sources.map((src, j) => (
-                    <div key={j} className="source-card">
-                      <div className="source-header"><span>{src.issue_key}</span> <span style={{fontSize:'0.7rem'}}>{src.chunk_type}</span></div>
-                      <div style={{ fontSize: "0.8rem", opacity: 0.8 }}>{src.content}</div>
-                    </div>
-                  ))}
+        <div className="chat-flow-container">
+           <div className="chat-content-limit">
+              {messages.map((msg, i) => (
+                <div key={i} className={`chat-row ${msg.role}`}>
+                   <div className="chat-avatar">{msg.role === 'ai' ? '🤖' : '👤'}</div>
+                   <div className="chat-message-container">
+                      <div className="chat-message-bubble">
+                         <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      </div>
+                      {msg.role === 'ai' && msg.meta?.type !== 'greeting' && (
+                        <div className="chat-message-actions">
+                           {chatContext.type === 'ticket' && (
+                             <button onClick={() => addAsComment(chatContext.issue_key, msg.content)}>Sync to Jira</button>
+                           )}
+                           <button onClick={() => navigator.clipboard.writeText(msg.content)}>Copy</button>
+                        </div>
+                      )}
+                   </div>
+                </div>
+              ))}
+              {loading && (
+                <div className="chat-row ai thinking">
+                   <div className="chat-avatar">🤖</div>
+                   <div className="thinking-bubble">
+                      <div className="dot"></div><div className="dot"></div><div className="dot"></div>
+                   </div>
                 </div>
               )}
-            </div>
-          </div>
-        ))}
-        {loading && <div className="message ai"><div className="avatar">🤖</div><div className="message-content"><div className="typing"><span></span><span></span><span></span></div></div></div>}
-        <div ref={chatEndRef} />
-      </div>
-      <div className="input-container">
-        <div className="input-box">
-          <textarea placeholder="Ask anything about the project..." rows="1" value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), askAI())} />
-          <button className="send-btn" onClick={askAI} disabled={loading || !question.trim()}>{loading ? "..." : "↑"}</button>
+              <div ref={chatEndRef} />
+           </div>
         </div>
-      </div>
-    </>
+
+        {/* TOOL PANEL (INTEGRATED) */}
+        <aside className="integrated-tool-panel">
+           <div className="tool-tabs">
+              <button className={activeTool === 'analyzer' ? 'active' : ''} onClick={() => setActiveTool('analyzer')}>Analyze</button>
+              <button className={activeTool === 'test' ? 'active' : ''} onClick={() => setActiveTool('test')}>Tests</button>
+              <button className={activeTool === 'risk' ? 'active' : ''} onClick={() => setActiveTool('risk')}>Risks</button>
+           </div>
+           <div className="tool-view">
+              {activeTool === 'analyzer' && <AnalyzerForm onFetch={setChatToTicket} />}
+              {activeTool === 'test' && <SimpleTool apiPath="/generate-testcases/" resultKey="testcases" addAsComment={addAsComment} />}
+              {activeTool === 'risk' && <SimpleTool apiPath="/risk-analysis/" resultKey="analysis" addAsComment={addAsComment} />}
+           </div>
+        </aside>
+
+        <div className="chat-input-bar">
+           <div className="input-container">
+              <textarea 
+                placeholder={chatContext.type === 'ticket' ? `Discuss ${chatContext.issue_key}...` : "How can I help you analyze your project?"}
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), askAI())}
+              />
+              <button className="send-btn" onClick={() => askAI()} disabled={loading || !question.trim()}>
+                 <span className="arrow">↑</span>
+              </button>
+           </div>
+           <p className="input-hint">Jira AI can refine analysis based on your feedback. Just ask.</p>
+        </div>
+      </main>
+
+      {/* BUG MODAL */}
+      {isBugSidebarOpen && (
+        <div className="chat-modal-overlay" onClick={() => setIsBugSidebarOpen(false)}>
+           <div className="chat-modal" onClick={e => e.stopPropagation()}>
+              <div className="modal-top">
+                 <h3>Log Ticket</h3>
+                 <button onClick={() => setIsBugSidebarOpen(false)}>&times;</button>
+              </div>
+              <div className="modal-fields">
+                 <div className="field">
+                    <label>Project</label>
+                    <input value={bugData.project} onChange={e => setBugData({...bugData, project: e.target.value})} />
+                 </div>
+                 <div className="field">
+                    <label>Summary</label>
+                    <input placeholder="Short description..." value={bugData.summary} onChange={e => setBugData({...bugData, summary: e.target.value})} />
+                 </div>
+                 <div className="field">
+                    <label>Context / Logs</label>
+                    <textarea rows="5" placeholder="Details..." value={bugData.raw} onChange={e => setBugData({...bugData, raw: e.target.value})} />
+                 </div>
+                 <button className="modal-submit" onClick={async () => {
+                    setIsLoggingBug(true);
+                    try {
+                       await fetch("http://localhost:8000/jira/log-bug", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ project_key: bugData.project, summary: bugData.summary, raw_data: bugData.raw })
+                       });
+                       alert("Ticket logged.");
+                       setIsBugSidebarOpen(false);
+                    } finally { setIsLoggingBug(false); }
+                 }} disabled={isLoggingBug}>{isLoggingBug ? "Processing..." : "Create Ticket"}</button>
+              </div>
+           </div>
+        </div>
+      )}
+    </div>
   );
 }
 
-function ToolView({ title, apiPath, resultKey, placeholder, isSearch = false }) {
+// SHARED COMPONENTS
+function AnalyzerForm({ onFetch }) {
   const [id, setId] = useState("");
-  const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
-
-  const runTool = async () => {
-    if (!id.trim()) return;
+  const runFetch = async () => {
+    if (!id) return;
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:8000${apiPath}${id}`);
+      const res = await fetch(`http://localhost:8000/jira/tickets/${id}`);
       const data = await res.json();
-      if (isSearch) {
-          setResult(`Summary: ${data.summary}\n\nDescription: ${data.description}`);
-      } else {
-          setResult(data[resultKey]);
-      }
-    } catch (err) {
-      setResult("Error fetching data from AI service.");
-    } finally {
-      setLoading(false);
-    }
+      onFetch(id, data);
+    } catch (err) { alert("Ticket not found."); }
+    finally { setLoading(false); }
   };
-
   return (
-    <div style={{ padding: "40px", display: "flex", flexDirection: "column", gap: "20px", height: "100%" }}>
-      <h2 style={{ fontSize: "2rem" }}>{title}</h2>
-      <div className="input-box" style={{ maxWidth: "600px", background: "rgba(255,255,255,0.05)" }}>
-        <input 
-          style={{ flex: 1, background: "transparent", border: "none", color: "white", padding: "10px", outline: "none" }} 
-          placeholder={placeholder} 
-          value={id} 
-          onChange={(e) => setId(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && runTool()}
-        />
-        <button className="send-btn" onClick={runTool} disabled={loading}>{loading ? "..." : "Run"}</button>
-      </div>
-      <div style={{ flex: 1, background: "rgba(15,23,42,0.5)", borderRadius: "20px", border: "1px solid var(--glass-border)", padding: "30px", overflowY: "auto", whiteSpace: "pre-wrap", lineHeight: "1.8" }}>
-        {loading ? "AI is processing your request..." : (result || "Result will appear here...")}
-      </div>
+    <div className="inline-tool-form">
+       <input placeholder="EVR-123" value={id} onChange={e => setId(e.target.value)} />
+       <button onClick={runFetch} disabled={loading}>{loading ? "..." : "Induct"}</button>
+    </div>
+  );
+}
+
+function SimpleTool({ apiPath, resultKey, addAsComment }) {
+  const [id, setId] = useState("");
+  const [res, setRes] = useState("");
+  const [loading, setLoading] = useState(false);
+  const run = async () => {
+    if (!id) return;
+    setLoading(true);
+    try {
+      const data = await (await fetch(`http://localhost:8000${apiPath}${id}`)).json();
+      setRes(data[resultKey]);
+    } catch (err) { alert("Error."); }
+    finally { setLoading(false); }
+  };
+  return (
+    <div className="inline-tool-form">
+       <input placeholder="Issue Key..." value={id} onChange={e => setId(e.target.value)} />
+       <button onClick={run} disabled={loading}>{loading ? "..." : "Run"}</button>
+       {res && (
+         <div className="tool-res-pop">
+            <div className="pop-scroll">{res}</div>
+            <button onClick={() => addAsComment(id, res)}>Sync to Jira</button>
+         </div>
+       )}
     </div>
   );
 }

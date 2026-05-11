@@ -1,4 +1,4 @@
-from app.services.ai_provider import llm, add_ai_stamp
+import app.services.ai_provider as ai_provider
 
 def refine_bug_report(raw_data: str):
     """
@@ -14,8 +14,11 @@ def refine_bug_report(raw_data: str):
     Professional Bug Report:
     """
     
-    refined = llm.invoke(prompt)
+    # refined = llm.invoke(prompt)
 
-    # stamp = "\n\n---\n✨ Logged via Local AI Qwen @ Jira AI Smart Platform"
-    # return refined + stamp
-    return add_ai_stamp(refined)
+    # # stamp = "\n\n---\n✨ Logged via Local AI Qwen @ Jira AI Smart Platform"
+    # # return refined + stamp
+    # return add_ai_stamp(refined)
+    
+    refined = ai_provider.llm.invoke(prompt)
+    return ai_provider.add_ai_stamp(refined)

@@ -30,12 +30,17 @@ class BugReport(BaseModel):
 class StatusUpdate(BaseModel):
     transition_name: str
 
+
+class CommentRequest(BaseModel):
+    text: str
+
 @app.get("/")
 def home():
     return {"message": "Jira RAG Service Running"}
 
 @app.get("/system-info")
 def get_system_info():
+    import app.services.ai_provider as ai_provider
     cpu_usage = psutil.cpu_percent()
     ram_usage = psutil.virtual_memory().percent
     gpu_info = "N/A"
@@ -47,10 +52,10 @@ def get_system_info():
         except Exception:
             pass
     return {
-        "model": "Qwen3:4b (Local)",
+        "model": ai_provider.active_model_name,
         "vector_db": "pgvector (PostgreSQL)",
         "status": "Healthy",
-        "engine": "Ollama RAG Engine",
+        "engine": "Enterprise AI Orchestrator",
         "metrics": {"cpu": f"{cpu_usage}%", "ram": f"{ram_usage}%", "gpu": gpu_info}
     }
 
@@ -94,6 +99,34 @@ def log_bug(report: BugReport):
     refined_description = refine_bug_report(report.raw_data)
     new_issue = create_issue(report.project_key, report.summary, refined_description)
     return {"status": "success", "issue_key": new_issue.key, "description": refined_description}
+
+class TicketChatRequest(BaseModel):
+    issue_key: str
+    question: str
+    ticket_details: str
+
+@app.post("/chat/ticket")
+def ticket_chat(request: TicketChatRequest):
+    from app.services.rag_chat_service import ask_ticket_chat
+    return ask_ticket_chat(request.issue_key, request.question, request.ticket_details)
+
+
+@app.get("/jira/tickets/{issue_key}")
+def get_ticket_details(issue_key: str):
+    issue = get_issue(issue_key)
+    return {
+        "key": issue.key,
+        "summary": issue.fields.summary,
+        "description": issue.fields.description,
+        "status": issue.fields.status.name,
+        "priority": issue.fields.priority.name if hasattr(issue.fields, 'priority') else "None",
+        "created": str(issue.fields.created)
+    }
+
+@app.post("/jira/tickets/{issue_key}/comment")
+def add_jira_comment(issue_key: str, comment: CommentRequest):
+    add_comment(issue_key, comment.text)
+    return {"status": "success", "message": "Comment added to Jira"}
 
 @app.get("/jira/status-search")
 def search_status(status: str):
