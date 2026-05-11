@@ -1,23 +1,17 @@
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-
-from app.services.rag_chat_service import (
-    ask_rag
-)
+from app.services.rag_chat_service import (ask_rag)
 
 # ------------------------------------------------
 # ROUTER
 # ------------------------------------------------
-
 router = APIRouter()
-
 # ------------------------------------------------
 # REQUEST MODEL
 # ------------------------------------------------
 
 class AIQuestion(BaseModel):
-
     question: str
 
 # ------------------------------------------------
@@ -36,9 +30,10 @@ def ask_ai(data: AIQuestion):
 
     #     "response": response
     # }
-    return StreamingResponse(
+    # return StreamingResponse(
 
-        ask_rag(data.question),
+    #     ask_rag(data.question),
 
-        media_type="text/plain"
-    )
+    #     media_type="text/plain"
+    # )
+    return ask_rag(data.question)

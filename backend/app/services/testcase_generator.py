@@ -1,14 +1,10 @@
 from langchain_ollama import OllamaLLM
-
 llm = OllamaLLM(model="qwen3:4b")
 
 def generate_testcases(story):
-
     prompt = f"""
     Generate detailed QA test cases for:
-
     {story}
-
     Include:
     - Positive scenarios
     - Negative scenarios
@@ -16,9 +12,7 @@ def generate_testcases(story):
     - Edge cases
     - Security checks
     """
-
     response = llm.invoke(prompt)
-
     return response
 # from openai import OpenAI
 # import os

@@ -17,7 +17,7 @@ jira = JIRA(
     basic_auth=(
         os.getenv("JIRA_EMAIL"),
         os.getenv("JIRA_API_TOKEN")
-    )
+)
 )
 
 # ------------------------------------------------
@@ -25,9 +25,7 @@ jira = JIRA(
 # ------------------------------------------------
 
 PROJECT_KEY = "EVR"
-
 MAX_RESULTS = 50
-
 NEXT_PAGE_TOKEN = None
 
 # ------------------------------------------------
@@ -35,9 +33,7 @@ NEXT_PAGE_TOKEN = None
 # ------------------------------------------------
 
 while True:
-
     print("\nFetching Jira tickets...")
-
     try:
 
         # ----------------------------------------
@@ -64,11 +60,8 @@ while True:
         # ----------------------------------------
 
         if not issues:
-
             print("\nNo more Jira tickets.")
-
             break
-
         print(f"Fetched {len(issues)} issues")
 
         # ----------------------------------------
@@ -76,11 +69,8 @@ while True:
         # ----------------------------------------
 
         for issue in issues:
-
             try:
-
                 issue_key = issue.key
-
                 print(f"\nProcessing {issue_key}")
 
                 # --------------------------------
@@ -90,23 +80,18 @@ while True:
                 summary = str(
                     issue.fields.summary or ""
                 )
-
                 description = str(
                     issue.fields.description or ""
                 )
-
                 status = str(
                     issue.fields.status or ""
                 )
-
                 assignee = str(
                     issue.fields.assignee or ""
                 )
-
                 priority = str(
                     issue.fields.priority or ""
                 )
-
                 labels = ", ".join(
                     issue.fields.labels or []
                 )
@@ -137,11 +122,8 @@ while True:
 
                 metadata = f"""
                 Status: {status}
-
                 Assignee: {assignee}
-
                 Priority: {priority}
-
                 Labels: {labels}
                 """
 
@@ -156,17 +138,13 @@ while True:
                 # --------------------------------
 
                 try:
-
                     comments = (
                         issue.fields.comment.comments
                     )
-
                     for c in comments:
-
                         comment_body = str(
                             c.body or ""
                         )
-
                         store_chunk(
                             issue_key,
                             "comment",
@@ -174,21 +152,16 @@ while True:
                         )
 
                 except Exception as comment_error:
-
                     print(
                         f"Comment fetch failed "
                         f"for {issue_key}"
                     )
-
                     print(comment_error)
-
             except Exception as issue_error:
-
                 print(
                     f"Failed processing "
                     f"{issue.key}"
                 )
-
                 print(issue_error)
 
         # ----------------------------------------
@@ -211,17 +184,12 @@ while True:
         # ----------------------------------------
 
         if not NEXT_PAGE_TOKEN:
-
             print("\nReached final page.")
-
             break
 
     except Exception as fetch_error:
-
         print("\nJira fetch failed")
-
         print(fetch_error)
-
         break
 
 # ------------------------------------------------

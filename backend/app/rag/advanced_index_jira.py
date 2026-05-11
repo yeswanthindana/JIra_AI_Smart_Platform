@@ -1,13 +1,10 @@
 from app.database import SessionLocal
-
 from app.models.jira_knowledge_chunk import JiraKnowledgeChunk
-
 from app.rag.embedding_service import generate_embedding
 
 db = SessionLocal()
 
 def store_chunk(issue_key, chunk_type, content):
-
     if not content:
         return
 
@@ -31,7 +28,5 @@ def store_chunk(issue_key, chunk_type, content):
         return
 
     db.add(chunk)
-
     db.commit()
-
     print(f"Stored {chunk_type} for {issue_key}")
