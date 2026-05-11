@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
 jira = JIRA(
     server=os.getenv("JIRA_URL"),
     basic_auth=(

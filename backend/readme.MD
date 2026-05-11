@@ -1,873 +1,179 @@
-# Jira AI Smart Platform — Complete Phase 1 & Phase 2 Implementation Guide
+# 🧠 Jira RAG Service — Backend Architecture & Code Guide
 
-# Overview
-
-This document explains the complete implementation journey of the Jira AI Smart Platform from:
-
-* Phase 1 → Local AI + Jira Integration
-* Phase 2 → RAG + pgvector + AI Memory + Risk Analysis
-
-The goal of this project is to build a fully local AI-powered QA Engineering Intelligence Platform.
+Welcome to the **Ultimate Backend Guide** for the Jira RAG (Retrieval-Augmented Generation) Service. This document is designed for **everyone**—from total beginners to non-technical stakeholders—to understand exactly how this AI brain works, line by line.
 
 ---
 
-# Final Architecture
+## 🎯 The Ultimate Objective (For Non-Technical People)
+Imagine you have a senior engineer who has memorized **every single Jira ticket** ever created in your company. 
+- When you ask a question, they don't just guess; they instantly "search" their memory for similar past bugs.
+- They then use that history to give you a perfect answer, generate test cases, or predict risks.
 
-```text
-Jira Cloud
-    ↓
-Jira Ingestion Engine
-    ↓
-Chunking Engine
-    ↓
-Embedding Engine
-    ↓
-pgvector Database
-    ↓
-Semantic Search
-    ↓
-Local AI Model (Phi3 via Ollama)
-    ↓
-AI Risk Analysis
-    ↓
-QA Intelligence Platform
-```
+**This backend is that "Digital Senior Engineer."** It uses **Local AI** (so your data stays private) and a **Vector Database** (to act as the "Long-Term Memory").
 
 ---
 
-# PHASE 1 — LOCAL AI + JIRA INTEGRATION
+## 🏗️ Backend Architecture Overview
+The backend is built with **FastAPI** (a high-speed Python web framework). Here is how the data flows:
 
-# Goal of Phase 1
-
-Phase 1 focused on building:
-
-* local AI execution
-* Jira integration
-* AI test case generation
-* backend infrastructure
-
-At the end of Phase 1, the platform could:
-
-```text
-Read Jira Ticket
-    ↓
-Send to Local AI
-    ↓
-Generate QA Test Cases
-```
+1.  **Jira Client**: Connects to your Jira Cloud and "fetches" tickets.
+2.  **Embedding Engine**: Converts Jira text into "numbers" (Vectors) that the AI understands.
+3.  **pgvector (Postgres)**: Stores these numbers in a specialized database for "Similarity Search."
+4.  **RAG Service**: The orchestrator. It searches the memory, finds relevant history, and feeds it to the **Local LLM (Qwen3)**.
+5.  **FastAPI Routes**: The "Doors" through which the Frontend talks to the AI.
 
 ---
 
-# STEP 1 — Environment Setup
+## 📂 File-by-File Code Breakdown
 
-## Installed Components
+### 1. `app/main.py` — The Front Door
+This is the entry point of the application. It defines the "Routes" (URLs) that the frontend calls.
 
-| Component   | Purpose                      |
-| ----------- | ---------------------------- |
-| Python venv | isolated backend environment |
-| Docker      | container runtime            |
-| PostgreSQL  | database                     |
-| Redis       | caching / future queueing    |
-| FastAPI     | backend APIs                 |
-| Ollama      | local LLM runtime            |
+**Key Logic:**
+- `@app.get("/system-info")`: Checks the health of the AI, CPU, and GPU.
+- `@app.get("/ai-knowledge")`: Calls the AI to generate a "Did You Know?" tip.
+- `@app.get("/generate-testcases/{issue_key}")`: Takes a Jira ID and returns AI-generated test steps.
+- `@app.get("/risk-analysis/{issue_key}")`: Analyzes a ticket for historical regression risks.
 
----
+### 2. `app/database.py` — The Connection Hub
+This file tells the backend how to talk to the **PostgreSQL** database.
+- `DATABASE_URL`: The "address" of the database (`localhost:5432`).
+- `create_engine`: Opens the connection "pipe" to the data.
 
-# STEP 2 — Docker Setup
+### 3. `app/integrations/jira_client.py` — The Jira Connector
+This file authenticates the backend with Jira.
+- It uses your **Jira URL**, **Email**, and **API Token** from the `.env` file.
+- It provides a `get_issue()` function that can pull any ticket's data from the cloud in milliseconds.
 
-## Purpose
+### 4. `app/rag/embedding_service.py` — The "Translator"
+This is one of the most important files. It converts English text into math.
+- **Line 5**: Uses the `all-minilm` model to create embeddings.
+- **Line 7 (`generate_embedding`)**: Takes text like "Login is slow" and turns it into a list of 384 numbers.
+- **Why?** Because computers can compare numbers (vectors) much faster than they can compare words.
 
-Docker was used to:
+### 5. `app/rag/search_service.py` — The "Memory Searcher"
+This file searches the database for "Similar" items.
+- **Line 10 (SQL Query)**: Uses a special operator `<->` (Cosine Distance).
+- **The Logic**: It says "Find me the 5 tickets in the database whose 'numbers' are closest to the user's question."
 
-* run PostgreSQL
-* run Redis
-* isolate dependencies
-* simplify infrastructure setup
-
----
-
-# Docker Permission Fixes
-
-Docker initially failed due to:
-
-```text
-permission denied while trying to connect to docker.sock
-```
-
-Fix involved:
-
-* creating docker group
-* adding user to docker group
-* enabling Docker service
-* restarting session
+### 6. `app/services/rag_chat_service.py` — The "Orchestrator"
+This is the brain that puts everything together.
+- **Line 11 (`ask_rag`)**: 
+    1.  First, it calls `search_similar_issues` to find history.
+    2.  It builds a "Context" string containing that history.
+    3.  It creates a **Prompt**: "You are an expert. Here is some history [Context]. Now answer this [Question]."
+    4.  It calls the **Local LLM** (`llm.invoke`) and returns the final answer.
 
 ---
 
-# STEP 3 — PostgreSQL Setup
+## 🚀 How to Run the Backend
 
-## Database Created
+### Option A: Local Run (Development)
+1.  **Activate Environment**: 
+    ```bash
+    source .venv/bin/activate
+    ```
+2.  **Install Dependencies**: 
+    ```bash
+    pip install -r requirements.txt
+    ```
+3.  **Run with Auto-Reload**:
+    ```bash
+    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ```
 
-```text
-qa_ai
-```
-
-This became:
-
-```text
-AI Memory Database
-```
-
----
-
-# STEP 4 — FastAPI Backend Setup
-
-## Purpose
-
-FastAPI became:
-
-* API gateway
-* AI orchestration layer
-* Jira integration service
-* future MCP server
+### Option B: Docker Run (Production Grade)
+1.  **Build and Start**:
+    ```bash
+    docker-compose up -d --build
+    ```
+    *This starts the DB, Redis, Ollama, Backend, and Frontend all at once.*
 
 ---
 
-# Backend Startup
+## 📖 Key Concepts for Beginners
 
+### What is RAG?
+**Retrieval-Augmented Generation**. 
+Think of it as an "Open Book Exam." 
+- **Standard AI**: Tries to answer from memory (might lie/hallucinate).
+- **RAG AI**: Looks at the "Book" (your Jira history) first, then answers based on the facts it found.
+
+### What is pgvector?
+A plugin for the Postgres database that allows it to store and search "Vectors" (AI numbers). It makes finding "similar" text extremely fast.
+
+### Why Local AI (Ollama)?
+By running **Qwen3:4b** locally:
+1.  **Privacy**: Your Jira tickets never leave your server.
+2.  **Cost**: $0 per request.
+3.  **Speed**: No latency from external internet APIs.
+
+---
+
+## 🗄️ Database Setup (Manual)
+
+If you are not using `docker-compose`, you need to set up the database manually so the AI can store its memory.
+
+### Option A: Using Docker (Recommended)
+This is the fastest way to get the specialized `pgvector` database running:
 ```bash
-uvicorn app.main:app --reload
+# 1. Start the container
+docker run -d --name qa_postgres -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=qa_ai -p 5432:5432 pgvector/pgvector:pg16
+
+# 2. Initialize the tables (This script also automatically enables AI support)
+python3 create_tables.py
 ```
+
+### Option B: Without Docker (Local Postgres)
+If you have PostgreSQL installed directly on your machine:
+1.  **Install pgvector**: You must install the `pgvector` extension for your OS.
+2.  **Login to Postgres**: `psql -U postgres`
+3.  **Create Database**: `CREATE DATABASE qa_ai;`
+4.  **Initialize Tables**: Run `python3 create_tables.py` from the backend folder. (It will automatically run `CREATE EXTENSION vector` for you).
 
 ---
 
-# STEP 5 — Jira Integration
+## 🔍 Deep Dive: How `create_tables.py` works
 
-## Jira SDK
+For those who want to understand the code-level magic, here is exactly how this script sets up your database:
 
-Installed:
+### 1. The "Memory Scanner" (Metadata)
+At the top of the script, we import `Base` from `app.database`. 
+- `Base` is a **Declarative Base**. Think of it as a "Registry." 
+- When we import our models (like `JiraVector` and `JiraKnowledgeChunk`), they automatically "register" themselves with `Base`.
 
-```python
-from jira import JIRA
-```
-
-Purpose:
-
-* connect to Jira Cloud
-* fetch Jira tickets
-* extract summaries/descriptions/comments
-
----
-
-# Jira Authentication
-
-Used:
-
-* Jira URL
-* Jira email
-* Jira API token
-
-Stored in:
-
-```text
-.env
-```
-
----
-
-# STEP 6 — Local AI Setup
-
-## Why Local AI?
-
-Initially platform used OpenAI APIs.
-
-Later migrated to:
-
-```text
-Local AI
-```
-
-Benefits:
-
-* no API costs
-* no internet dependency
-* enterprise privacy
-* full offline capability
-
----
-
-# Ollama Installation
-
-Installed:
-
-```text
-Ollama
-```
-
-Purpose:
-
-```text
-Run LLMs locally
-```
-
----
-
-# Selected Model
-
-Used:
-
-```text
-Phi3
-```
-
-Reason:
-
-* lightweight
-* fast
-* good for 4GB GPU systems
-* suitable for QA generation tasks
-
----
-
-# Pull Model
-
-```bash
-ollama pull phi3
-```
-
----
-
-# Start Ollama
-
-```bash
-ollama serve
-```
-
----
-
-# STEP 7 — AI Test Case Generation
-
-## Goal
-
-Generate QA test cases automatically from Jira stories.
-
----
-
-# Old Flow
-
-```text
-Jira Ticket
-    ↓
-OpenAI API
-    ↓
-Test Cases
-```
-
----
-
-# New Local Flow
-
-```text
-Jira Ticket
-    ↓
-FastAPI
-    ↓
-Local Phi3 Model
-    ↓
-Generated Test Cases
-```
-
----
-
-# LangChain Integration
-
-Installed:
-
-```bash
-pip install langchain-community ollama
-```
-
----
-
-# Ollama LLM Usage
-
-```python
-from langchain_community.llms import Ollama
-
-llm = Ollama(model="phi3")
-```
-
----
-
-# Result of Phase 1
-
-At the end of Phase 1, platform supported:
-
-✅ Local AI
-✅ Jira integration
-✅ FastAPI backend
-✅ Docker infrastructure
-✅ PostgreSQL
-✅ Redis
-✅ AI test generation
-
----
-
-# PHASE 2 — RAG + AI MEMORY + RISK ANALYSIS
-
-# Goal of Phase 2
-
-Phase 2 focused on:
-
-```text
-AI Memory
-```
-
-Before Phase 2:
-
-AI had:
-
-```text
-NO MEMORY
-```
-
-Every Jira ticket was treated as a new problem.
-
----
-
-# Goal After Phase 2
-
-AI should:
-
-* remember historical Jira tickets
-* search similar defects
-* understand regressions
-* analyze historical risks
-* provide smarter QA insights
-
----
-
-# What is RAG?
-
-RAG means:
-
-```text
-Retrieval-Augmented Generation
-```
-
-Simple meaning:
-
-```text
-AI searches historical project knowledge
-BEFORE answering
-```
-
----
-
-# Example
-
-Without RAG:
-
-```text
-AI only sees current ticket
-```
-
-With RAG:
-
-```text
-AI sees:
-- current ticket
-- historical defects
-- old regressions
-- related discussions
-```
-
-Result:
-
-Much smarter responses.
-
----
-
-# STEP 1 — pgvector Setup
-
-## What is pgvector?
-
-pgvector converts PostgreSQL into:
-
-```text
-AI Vector Database
-```
-
-Purpose:
-
-* semantic search
-* similarity search
-* embedding storage
-
----
-
-# Enable pgvector
-
-Inside PostgreSQL:
-
+### 2. Enabling AI Support (Raw SQL)
+Before creating tables, the script connects to Postgres and runs:
 ```sql
-CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS vector
 ```
+This is a "Raw SQL" command. It tells Postgres: "Hey, prepare yourself to handle AI math (vectors)." Without this, the database wouldn't understand the `VECTOR` column type.
+
+### 3. The "Translator" (`create_all`)
+The most important line is `Base.metadata.create_all(bind=engine)`.
+- **`Base.metadata`**: This is a collection of all the table designs the AI found while scanning the `models/` folder.
+- **`create_all`**: This function is a translator. It looks at your Python code and translates it into SQL commands that Postgres understands.
+- **`bind=engine`**: This is the "Pipe." It tells SQLAlchemy which specific database to send those commands to.
+
+### 4. The Result
+If a table doesn't exist, it is created exactly as defined in your Python models. If it already exists, SQLAlchemy safely skips it.
 
 ---
 
-# STEP 2 — Embedding Engine
-
-## What is Embedding?
-
-Embedding means:
-
+## 🛠️ Project Structure at a Glance
 ```text
-Convert text into AI-understandable numbers
-```
-
-Example:
-
-```text
-"payment timeout"
-```
-
-becomes:
-
-```text
-[0.23, 0.55, 0.88, ...]
-```
-
-This allows semantic similarity comparison.
-
----
-
-# Embedding Model
-
-Used:
-
-```text
-all-MiniLM-L6-v2
-```
-
-Reason:
-
-* lightweight
-* fast
-* good semantic quality
-* suitable for local systems
-
----
-
-# Installed Packages
-
-```bash
-pip install sentence-transformers pgvector psycopg2-binary sqlalchemy
+backend/
+├── app/
+│   ├── api/          # Route handlers & Knowledge logic
+│   ├── integrations/ # External APIs (Jira)
+│   ├── rag/          # Embeddings & Vector Search
+│   ├── services/     # AI Logic (Chat, Risk, TestCases)
+│   ├── database.py   # DB Connection
+│   └── main.py       # API Entry Point
+├── Dockerfile        # Container recipe
+├── requirements.txt  # Python libraries
+└── index_full_jira.py # Script to "teach" the AI your project
 ```
 
 ---
-
-# STEP 3 — Vector Database Schema
-
-## Initial Table
-
-Created:
-
-```text
-jira_vectors
-```
-
-Stored:
-
-* issue key
-* summary
-* description
-* embedding
-
----
-
-# Enterprise Upgrade
-
-Later improved into:
-
-```text
-jira_knowledge_chunks
-```
-
-Purpose:
-
-Store multiple chunks per ticket.
-
----
-
-# Why Chunking?
-
-Instead of:
-
-```text
-1 huge Jira embedding
-```
-
-Used:
-
-```text
-summary chunk
-comment chunk
-metadata chunk
-```
-
-Benefits:
-
-* better search quality
-* smaller embeddings
-* more precise retrieval
-* enterprise-grade RAG design
-
----
-
-# Final Chunk Structure
-
-| Field      | Purpose             |
-| ---------- | ------------------- |
-| issue_key  | Jira ticket         |
-| chunk_type | summary/comment/etc |
-| content    | actual text         |
-| embedding  | vector embedding    |
-
----
-
-# STEP 4 — Jira Knowledge Ingestion
-
-## Goal
-
-Teach AI project history.
-
----
-
-# Jira Ingestion Flow
-
-```text
-Jira Ticket
-    ↓
-Extract content
-    ↓
-Split into chunks
-    ↓
-Generate embeddings
-    ↓
-Store in pgvector
-```
-
----
-
-# Stored Data
-
-Platform stored:
-
-✅ summaries
-✅ descriptions
-✅ comments
-✅ metadata
-✅ labels
-✅ priorities
-✅ assignees
-
----
-
-# Duplicate Protection
-
-Added logic to avoid:
-
-```text
-duplicate embeddings
-```
-
-This prevented:
-
-* repeated comments
-* repeated summaries
-* duplicate AI memory
-
----
-
-# Large Context Handling
-
-Some Jira tickets contained:
-
-* logs
-* stack traces
-* JSON payloads
-* RCA reports
-
-These caused:
-
-```text
-input length exceeds context length
-```
-
-Solution:
-
-```text
-text chunking
-```
-
----
-
-# Text Chunking
-
-Large content split into:
-
-```text
-comment_0
-comment_1
-comment_2
-```
-
-Benefits:
-
-* avoids embedding failures
-* supports huge tickets
-* enterprise-scale ingestion
-
----
-
-# STEP 5 — Semantic Search
-
-## Goal
-
-Search Jira tickets by:
-
-```text
-MEANING
-```
-
-NOT exact words.
-
----
-
-# Example
-
-Searching:
-
-```text
-payment timeout
-```
-
-could retrieve:
-
-```text
-gateway failure
-transaction delay
-retry issue
-```
-
-because vectors compare semantic meaning.
-
----
-
-# Search Flow
-
-```text
-Search Query
-    ↓
-Generate embedding
-    ↓
-Compare against pgvector
-    ↓
-Return similar Jira chunks
-```
-
----
-
-# Semantic Search Capabilities
-
-Platform now supports:
-
-✅ historical defect search
-✅ regression search
-✅ OCR issue search
-✅ camera issue search
-✅ playback issue search
-✅ event engine search
-
----
-
-# STEP 6 — AI Risk Analysis
-
-## Goal
-
-Make AI behave like:
-
-```text
-Senior QA Architect
-```
-
----
-
-# Risk Analysis Flow
-
-```text
-Current Jira Ticket
-        ↓
-Search similar historical tickets
-        ↓
-Retrieve related chunks
-        ↓
-Send context to Local AI
-        ↓
-Generate risk analysis
-```
-
----
-
-# AI Can Now Predict
-
-✅ regression risks
-✅ impacted modules
-✅ testing recommendations
-✅ high-risk areas
-✅ possible failures
-
----
-
-# Example
-
-Input:
-
-```text
-Authentication token refresh updated
-```
-
-AI retrieves:
-
-* old login defects
-* session timeout bugs
-* RBAC regressions
-
-Then predicts:
-
-```text
-HIGH RISK:
-- login
-- token refresh
-- permissions
-- session management
-```
-
----
-
-# PHASE 2 FINAL RESULT
-
-At the end of Phase 2, platform became:
-
-```text
-AI Engineering Intelligence Platform
-```
-
-instead of basic chatbot.
-
----
-
-# Final Phase 2 Capabilities
-
-✅ RAG architecture
-✅ AI memory
-✅ pgvector database
-✅ semantic search
-✅ Jira knowledge ingestion
-✅ chunked embeddings
-✅ duplicate protection
-✅ AI risk analysis
-✅ historical QA intelligence
-
----
-
-# Important Concepts Learned
-
-# 1. Embeddings
-
-Convert text into AI-searchable vectors.
-
----
-
-# 2. RAG
-
-Retrieve historical knowledge before AI generation.
-
----
-
-# 3. Semantic Search
-
-Search by meaning instead of keywords.
-
----
-
-# 4. Chunking
-
-Split large content into smaller AI-safe pieces.
-
----
-
-# 5. Vector Database
-
-Database optimized for AI similarity search.
-
----
-
-# Current Platform State
-
-The platform now supports:
-
-```text
-Jira Cloud
-    ↓
-AI Knowledge Ingestion
-    ↓
-pgvector Memory
-    ↓
-Semantic Search
-    ↓
-Local AI Reasoning
-    ↓
-QA Intelligence
-```
-
----
-
-# Future Roadmap
-
-Potential future phases:
-
-* Bitbucket PR intelligence
-* commit analysis
-* Jenkins integration
-* deployment intelligence
-* AI-generated regression suites
-* executive dashboards
-* MCP server architecture
-* autonomous QA agents
-* release risk scoring
-
----
-
-# Final Summary
-
-This project successfully evolved from:
-
-```text
-Basic AI test generation
-```
-
-into:
-
-```text
-Enterprise AI QA Intelligence Platform
-```
-
-with:
-
-✅ Local AI
-✅ Organizational Memory
-✅ Historical Jira Intelligence
-✅ Semantic Search
-✅ Risk Prediction
-✅ Enterprise RAG Architecture
+**Ultimate Goal Accomplished**: You now understand the full lifecycle of a request—from the moment you click "Ask" on the frontend to the moment the AI retrieves historical context from the vector database and generates a high-precision response.
