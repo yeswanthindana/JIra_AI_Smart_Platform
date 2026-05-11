@@ -1,19 +1,46 @@
-from langchain_ollama import OllamaLLM
-llm = OllamaLLM(model="qwen3:4b")
+from app.services.ai_provider import llm, add_ai_stamp
+from app.rag.search_service import search_similar_issues
 
-def generate_testcases(story):
+# from langchain_ollama import OllamaLLM
+# llm = OllamaLLM(model="qwen3:4b")
+
+def generate_testcases(ticket_text):
+    # 1. Get historical context from similar past issues
+    similar_issues = search_similar_issues(ticket_text)
+    
+    history = "\n".join([
+        f"- Past Issue [{r.issue_key}] ({r.chunk_type}):\n  Content: {r.content[:300]}..."
+        for r in similar_issues
+    ])
+
     prompt = f"""
-    Generate detailed QA test cases for:
-    {story}
+    You are a Senior QA Architect. 
+    Generate detailed, high-coverage test cases for the following new ticket.
+    
+    ----------------------------------------
+    CURRENT TICKET:
+    {ticket_text}
+    ----------------------------------------
+    
+    HISTORICAL CONTEXT (Similar past issues and bugs):
+    {history}
+    ----------------------------------------
+
+    Use the historical context to identify recurring failure patterns or specific areas that were buggy in the past.
+    
     Include:
-    - Positive scenarios
-    - Negative scenarios
-    - API validations
-    - Edge cases
-    - Security checks
+    - Positive scenarios (Happy path)
+    - Negative scenarios (Error handling)
+    - Boundary & Edge cases
+    - Regression checks based on history
+    - Security & Performance considerations
+    
+    Structure the response professionally.
     """
+    
     response = llm.invoke(prompt)
-    return response
+    # return response
+    return add_ai_stamp(response)
 # from openai import OpenAI
 # import os
 

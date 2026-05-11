@@ -1,7 +1,8 @@
-from langchain_community.llms import Ollama
+from app.services.ai_provider import llm, add_ai_stamp
 from app.rag.search_service import search_similar_issues
-from langchain_ollama import OllamaLLM
-llm = OllamaLLM(model="qwen3:4b")
+
+#from langchain_community.llms import Ollama
+#llm = OllamaLLM(model="qwen3:4b")
 
 def analyze_risk(current_ticket):
     similar_issues = search_similar_issues(
@@ -10,8 +11,8 @@ def analyze_risk(current_ticket):
     history = "\n".join([
         f"""
         Issue Key: {r.issue_key}
-        Summary: {r.summary}
-        Description: {r.description}
+        Context ({r.chunk_type}):
+        {r.content[:400]}
         """
         for r in similar_issues
     ])
@@ -32,4 +33,5 @@ def analyze_risk(current_ticket):
     Provide detailed QA risk analysis.
     """
     response = llm.invoke(prompt)
-    return response
+    # return response   
+    return add_ai_stamp(response)

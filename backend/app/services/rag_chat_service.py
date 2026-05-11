@@ -1,9 +1,6 @@
-from langchain_ollama import OllamaLLM
+from app.services.ai_provider import llm, add_ai_stamp
 from app.rag.search_service import (search_similar_issues)
-# ------------------------------------------------
-# LOCAL AI MODEL
-# ------------------------------------------------
-llm = OllamaLLM(model="qwen3:4b")
+
 # ------------------------------------------------
 # RAG CHAT
 # ------------------------------------------------
@@ -39,7 +36,7 @@ def ask_rag(question):
     4. Recommendations
     5. QA considerations
     """
-    response = llm.invoke(prompt)
+    response = add_ai_stamp(llm.invoke(prompt))
     return {
         "answer": response,
         "sources": [

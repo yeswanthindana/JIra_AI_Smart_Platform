@@ -1,5 +1,6 @@
 import random
-from app.services.rag_chat_service import llm
+#from app.services.rag_chat_service import llm
+from app.services.ai_provider import llm
 
 # Fallback in case LLM is offline
 STATIC_KNOWLEDGE = [
