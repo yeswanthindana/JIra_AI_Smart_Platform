@@ -110,26 +110,69 @@ By running **Qwen3:4b** locally:
 
 ---
 
-## 🗄️ Database Setup (Manual)
+## 🛠️ Database & Infrastructure Setup
 
-If you are not using `docker-compose`, you need to set up the database manually so the AI can store its memory.
+Choose one of the following methods to set up your vector database and cache.
 
 ### Option A: Using Docker (Recommended)
-This is the fastest way to get the specialized `pgvector` database running:
+This is the fastest way to get the specialized `pgvector` database and Redis running:
+
 ```bash
-# 1. Start the container
+# 1. Start pgvector
 docker run -d --name qa_postgres -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=qa_ai -p 5432:5432 pgvector/pgvector:pg16
 
-# 2. Initialize the tables (This script also automatically enables AI support)
+# 2. Start Redis
+docker run -d --name qa_redis -p 6379:6379 redis:7
+
+# 3. Initialize the tables
 python3 create_tables.py
 ```
 
-### Option B: Without Docker (Local Postgres)
-If you have PostgreSQL installed directly on your machine:
-1.  **Install pgvector**: You must install the `pgvector` extension for your OS.
-2.  **Login to Postgres**: `psql -U postgres`
-3.  **Create Database**: `CREATE DATABASE qa_ai;`
-4.  **Initialize Tables**: Run `python3 create_tables.py` from the backend folder. (It will automatically run `CREATE EXTENSION vector` for you).
+### Option B: Manual Machine Setup (Ubuntu - No Docker)
+
+If you prefer to run the infrastructure directly on your machine, follow these steps for Ubuntu 24.04+.
+
+#### 1. PostgreSQL & pgvector Setup
+Ubuntu 24.04 includes `pgvector` in its official repositories.
+
+```bash
+# Update and install
+sudo apt update
+sudo apt install -y postgresql-16 postgresql-16-pgvector
+
+# Start and enable service
+sudo systemctl start postgresql
+sudo systemctl enable postgresql
+
+# Create Database and User (matching .env defaults)
+sudo -u postgres psql <<EOF
+ALTER USER postgres WITH PASSWORD 'postgres';
+CREATE DATABASE qa_ai;
+\c qa_ai
+CREATE EXTENSION IF NOT EXISTS vector;
+EOF
+```
+
+#### 2. Redis Setup
+```bash
+# Install Redis server
+sudo apt install -y redis-server
+
+# Start and enable service
+sudo systemctl start redis-server
+sudo systemctl enable redis-server
+```
+
+#### 3. Initialize Application Tables
+Once the services are running, run the initialization script from the `backend` folder:
+```bash
+python3 create_tables.py
+```
+
+#### 4. Configuration Adjustment
+Update your `.env` file to point to `localhost` instead of the Docker service names:
+- `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/qa_ai`
+- `REDIS_HOST=localhost`
 
 ---
 

@@ -6,7 +6,7 @@ function App() {
   const [messages, setMessages] = useState([
     {
       role: "ai",
-      content: "Hello! I'm synchronized with your Jira project data. Whether you need a deep dive into a specific ticket or a high-level risk assessment across the board, I'm here to help. \n\nHow can I assist you today?",
+      content: "Welcome to your **Jira AI Assistant**. I'm connected to your workspace and ready to help you analyze tickets, generate test cases, and assess risks. \n\nHow can I help you today?",
       meta: { model: "Strategic-AI", type: "greeting" }
     }
   ]);
@@ -15,7 +15,7 @@ function App() {
   const [question, setQuestion] = useState("");
   const [chatContext, setChatContext] = useState({ type: 'global', issue_key: null, details: null });
   const [activeTool, setActiveTool] = useState('analyzer');
-  const [isBugSidebarOpen, setIsBugSidebarOpen] = useState(false);
+  const [isBugModalOpen, setIsBugModalOpen] = useState(false);
   const [bugData, setBugData] = useState({ project: "EVR", summary: "", raw: "" });
   const [isLoggingBug, setIsLoggingBug] = useState(false);
 
@@ -49,15 +49,21 @@ function App() {
     if (!manualQuestion) {
       setMessages(prev => [...prev, { role: "user", content: q }]);
       setQuestion("");
+      // Reset height of textarea
+      const textarea = document.querySelector('.input-container textarea');
+      if (textarea) textarea.style.height = 'auto';
     }
     
     setLoading(true);
+    // Add an empty AI message that we will populate via stream
+    setMessages(prev => [...prev, { role: "ai", content: "", meta: { model: systemInfo.model, status: "Thinking" } }]);
+
     try {
-      let endpoint = "http://localhost:8000/ask-ai";
+      let endpoint = "http://localhost:8000/ask-ai/stream";
       let payload = { question: q };
 
       if (currentContext.type === 'ticket') {
-        endpoint = "http://localhost:8000/chat/ticket";
+        endpoint = "http://localhost:8000/chat/ticket/stream";
         payload = {
           issue_key: currentContext.issue_key,
           question: q,
@@ -65,20 +71,35 @@ function App() {
         };
       }
 
-      const res = await fetch(endpoint, {
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
-      setMessages(prev => [...prev, { 
-        role: "ai", 
-        content: data.answer, 
-        sources: data.sources || [],
-        meta: { model: systemInfo.model, status: "Analyzed" }
-      }]);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let cumulativeContent = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        cumulativeContent += decoder.decode(value, { stream: true });
+        
+        // Update the last message in the list
+        setMessages(prev => {
+          const newMessages = [...prev];
+          newMessages[newMessages.length - 1].content = cumulativeContent;
+          newMessages[newMessages.length - 1].meta.status = "Analyzed";
+          return newMessages;
+        });
+      }
     } catch (err) {
-      setMessages(prev => [...prev, { role: "ai", content: "I encountered a connection error. Please ensure the backend services are operational." }]);
+      setMessages(prev => {
+        const newMessages = [...prev];
+        newMessages[newMessages.length - 1].content = "Connection error. Please check your backend.";
+        return newMessages;
+      });
     } finally {
       setLoading(false);
     }
@@ -88,15 +109,32 @@ function App() {
     const newContext = { type: 'ticket', issue_key, details };
     setChatContext(newContext);
     
+    const detailsMarkdown = `
+### 🎫 Ticket Inducted: ${issue_key}
+
+| Field | Detail |
+| :--- | :--- |
+| **Summary** | ${details.summary} |
+| **Status** | \`${details.status}\` |
+| **Priority** | ${details.priority} |
+| **Created** | ${new Date(details.created).toLocaleDateString()} |
+
+**Description:**
+${details.description || "_No description provided._"}
+
+---
+*I've loaded this ticket into my active context. Performing deep analysis now...*
+    `;
+
     setMessages([
       {
         role: "ai",
-        content: `I've loaded the details for **${issue_key}**: *${details.summary}*. \n\nI'm performing an initial assessment now. One moment...`,
+        content: detailsMarkdown,
         meta: { model: systemInfo.model, status: "Syncing" }
       }
     ]);
 
-    const initialPrompt = `Provide a comprehensive breakdown of ${issue_key}. I need a clear summary, a list of identified risks, and a structured set of testing scenarios for QA. Format your response clearly.`;
+    const initialPrompt = `Analyze ticket ${issue_key}. Provide a summary, top 3 risks, and 3 critical test cases based on the provided details and historical context.`;
     await askAI(initialPrompt, newContext);
   };
 
@@ -105,23 +143,39 @@ function App() {
     setMessages([
       {
         role: "ai",
-        content: "I've reset to the global project context. I'm ready to analyze patterns across your entire workspace. What's on your mind?",
+        content: "Returned to global context. I'm ready to analyze your entire Jira project. What's next?",
         meta: { model: systemInfo.model, status: "Ready" }
       }
     ]);
   };
 
-  const addAsComment = async (issueKey, text) => {
-    if (!window.confirm(`Would you like to sync this part of our conversation to ${issueKey}?`)) return;
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [commentToSync, setCommentToSync] = useState("");
+  const [targetIssueKey, setTargetIssueKey] = useState("");
+
+  const addAsComment = (issueKey, text) => {
+    // Wrap the entire content in a clean Jira panel for a production look
+    const stamp = `⚡ *Jira AI Smart Insight* (via ${systemInfo.model})`;
+    
+    // Ensure the content is clean and formatted
+    const finalComment = `{panel:title=AI ANALYSIS REPORT|titleBGColor=#ebf2ff|borderStyle=solid|borderColor=#3572b0}\n${text}\n\n---\n${stamp}\n{panel}`;
+    
+    setTargetIssueKey(issueKey);
+    setCommentToSync(finalComment);
+    setIsSyncModalOpen(true);
+  };
+
+  const confirmSync = async () => {
     try {
-      await fetch(`http://localhost:8000/jira/tickets/${issueKey}/comment`, {
+      await fetch(`http://localhost:8000/jira/tickets/${targetIssueKey}/comment`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text: commentToSync })
       });
-      alert("Successfully added as a comment to Jira.");
+      alert("Comment successfully synced to Jira.");
+      setIsSyncModalOpen(false);
     } catch (err) {
-      alert("There was an error syncing with Jira.");
+      alert("Sync failed.");
     }
   };
 
@@ -130,133 +184,172 @@ function App() {
       {/* SIDEBAR */}
       <aside className="chat-sidebar">
         <div className="sidebar-header">
-           <div className="sidebar-logo">J</div>
-           <button className="new-chat-btn" onClick={resetChat}>+ New Session</button>
-        </div>
-
-        <div className="sidebar-section">
-           <label>Project Utilities</label>
-           <button className="sidebar-link" onClick={() => setIsBugSidebarOpen(true)}>
-              <span className="icon">🐞</span> Log Bug in Jira
+           <div className="brand">
+              <div className="logo-box">J</div>
+              <div className="brand-text">
+                 <h2>Jira AI Smart</h2>
+                 <p className="premium-font" style={{fontSize: '0.65rem', color: 'var(--primary)', fontWeight: 800}}>ENTERPRISE RAG</p>
+              </div>
+           </div>
+           <button className="new-chat-btn" onClick={resetChat}>
+              <span style={{fontSize: '1.2rem'}}>+</span> New Session
            </button>
         </div>
 
-        <div className="sidebar-history">
-           <label>Current Context</label>
-           <div className={`context-card ${chatContext.type === 'ticket' ? 'active' : ''}`}>
-              <div className="card-top">{chatContext.type === 'ticket' ? chatContext.issue_key : 'Global Project'}</div>
-              <div className="card-desc">{chatContext.type === 'ticket' ? chatContext.details.summary : 'Multi-ticket analysis enabled.'}</div>
+        <div className="sidebar-scroll">
+           <span className="section-label">Jira Utilities</span>
+           <button className="nav-item" onClick={() => setIsBugModalOpen(true)}>
+              <span>🐞</span> Log Bug
+           </button>
+           
+           <div style={{marginTop: '2rem'}}>
+              <span className="section-label">Active Context</span>
+              <div className={`context-status ${chatContext.type === 'ticket' ? 'active' : ''}`}>
+                 <div className="status-row">
+                    <span className="indicator"></span>
+                    {chatContext.type === 'ticket' ? chatContext.issue_key : 'Project Global'}
+                 </div>
+                 <p style={{fontSize: '0.75rem', color: 'var(--text-dim)', lineHeight: '1.4'}}>
+                    {chatContext.type === 'ticket' ? chatContext.details.summary : 'Analyzing full project history.'}
+                 </p>
+              </div>
            </div>
         </div>
 
         <div className="sidebar-footer">
-           <div className="system-pill">
-              <span className={`status-orb ${systemInfo.status === 'Active' ? 'online' : 'offline'}`}></span>
-              {systemInfo.model}
+           <div className="status-row">
+              <span className={`indicator ${systemInfo.status === 'Active' ? 'online' : 'offline'}`} style={{background: systemInfo.status === 'Active' ? '#10b981' : '#ef4444'}}></span>
+              <span style={{fontSize: '0.8rem', fontWeight: 700}}>{systemInfo.model}</span>
            </div>
-           <div className="metrics-compact">
-              <span>CPU {systemInfo.metrics?.cpu}</span>
-              <span>RAM {systemInfo.metrics?.ram}</span>
+           <div style={{display: 'flex', gap: '10px', marginTop: '8px'}}>
+              <div style={{fontSize: '0.6rem', color: 'var(--text-muted)'}}>CPU {systemInfo.metrics?.cpu}</div>
+              <div style={{fontSize: '0.6rem', color: 'var(--text-muted)'}}>RAM {systemInfo.metrics?.ram}</div>
            </div>
         </div>
       </aside>
 
-      {/* MAIN CHAT AREA */}
+      {/* MAIN CONTENT */}
       <main className="chat-main">
-        <header className="chat-header">
-           <div className="header-info">
-              <h1>{chatContext.type === 'ticket' ? `Analyzing ${chatContext.issue_key}` : "Project Assistant"}</h1>
-              <div className="status-label">{loading ? "Thinking..." : "Ready to assist"}</div>
+        <header className="top-bar">
+           <div className="view-info">
+              <h1>{chatContext.type === 'ticket' ? `Ticket Analysis: ${chatContext.issue_key}` : "Project Intelligence"}</h1>
+              <p>{loading ? "AI is processing..." : "Ready for instructions"}</p>
            </div>
            {chatContext.type === 'ticket' && (
-             <button className="btn-exit" onClick={resetChat}>Exit Ticket View</button>
+              <button className="exit-ticket-btn" onClick={resetChat}>Close Ticket</button>
            )}
         </header>
 
-        <div className="chat-flow-container">
-           <div className="chat-content-limit">
+        <div className="chat-container">
+           <div className="chat-inner">
               {messages.map((msg, i) => (
-                <div key={i} className={`chat-row ${msg.role}`}>
-                   <div className="chat-avatar">{msg.role === 'ai' ? '🤖' : '👤'}</div>
-                   <div className="chat-message-container">
-                      <div className="chat-message-bubble">
-                         <ReactMarkdown>{msg.content}</ReactMarkdown>
-                      </div>
-                      {msg.role === 'ai' && msg.meta?.type !== 'greeting' && (
-                        <div className="chat-message-actions">
-                           {chatContext.type === 'ticket' && (
-                             <button onClick={() => addAsComment(chatContext.issue_key, msg.content)}>Sync to Jira</button>
-                           )}
-                           <button onClick={() => navigator.clipboard.writeText(msg.content)}>Copy</button>
-                        </div>
-                      )}
-                   </div>
-                </div>
+                 <div key={i} className={`chat-bubble ${msg.role}`}>
+                    <div className="avatar-circle">{msg.role === 'ai' ? '🤖' : '👤'}</div>
+                    <div className="bubble-content">
+                          <div className="message-meta">
+                             <span>{msg.meta.model} • {msg.meta.status}</span>
+                             {msg.role === "ai" && chatContext.type === 'ticket' && !loading && (
+                               <button 
+                                 className="inline-sync-btn" 
+                                 onClick={() => addAsComment(chatContext.issue_key, msg.content)}
+                                 title="Sync this response to Jira"
+                               >
+                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                                 Sync
+                               </button>
+                             )}
+                          </div>
+                       <div className="message-text">
+                          <ReactMarkdown>{msg.content}</ReactMarkdown>
+                       </div>
+                       {msg.role === 'ai' && msg.meta?.type !== 'greeting' && (
+                          <div className="bubble-actions">
+                             {chatContext.type === 'ticket' && (
+                                <button className="action-btn" onClick={() => addAsComment(chatContext.issue_key, msg.content)}>Sync to Jira</button>
+                             )}
+                             <button className="action-btn" onClick={() => navigator.clipboard.writeText(msg.content)}>Copy</button>
+                          </div>
+                       )}
+                    </div>
+                 </div>
               ))}
               {loading && (
-                <div className="chat-row ai thinking">
-                   <div className="chat-avatar">🤖</div>
-                   <div className="thinking-bubble">
-                      <div className="dot"></div><div className="dot"></div><div className="dot"></div>
-                   </div>
-                </div>
+                 <div className="chat-bubble ai">
+                    <div className="avatar-circle">🤖</div>
+                    <div className="bubble-content">
+                       <div className="typing">
+                          <div className="dot"></div><div className="dot"></div><div className="dot"></div>
+                       </div>
+                    </div>
+                 </div>
               )}
               <div ref={chatEndRef} />
            </div>
         </div>
 
-        {/* TOOL PANEL (INTEGRATED) */}
-        <aside className="integrated-tool-panel">
-           <div className="tool-tabs">
-              <button className={activeTool === 'analyzer' ? 'active' : ''} onClick={() => setActiveTool('analyzer')}>Analyze</button>
-              <button className={activeTool === 'test' ? 'active' : ''} onClick={() => setActiveTool('test')}>Tests</button>
-              <button className={activeTool === 'risk' ? 'active' : ''} onClick={() => setActiveTool('risk')}>Risks</button>
+        {/* FLOATING TOOLS */}
+        <aside className="floating-tools">
+           <div className="tool-header">
+              <button className={`tool-tab ${activeTool === 'analyzer' ? 'active' : ''}`} onClick={() => setActiveTool('analyzer')}>Induct</button>
+              <button className={`tool-tab ${activeTool === 'test' ? 'active' : ''}`} onClick={() => setActiveTool('test')}>Tests</button>
+              <button className={`tool-tab ${activeTool === 'risk' ? 'active' : ''}`} onClick={() => setActiveTool('risk')}>Risks</button>
            </div>
-           <div className="tool-view">
-              {activeTool === 'analyzer' && <AnalyzerForm onFetch={setChatToTicket} />}
-              {activeTool === 'test' && <SimpleTool apiPath="/generate-testcases/" resultKey="testcases" addAsComment={addAsComment} />}
-              {activeTool === 'risk' && <SimpleTool apiPath="/risk-analysis/" resultKey="analysis" addAsComment={addAsComment} />}
+           <div className="tool-body">
+              {activeTool === 'analyzer' && <AnalyzerBox onFetch={setChatToTicket} />}
+              {activeTool === 'test' && (
+                <div className="tool-input-group">
+                   <button className="premium-btn" onClick={() => askAI("Generate professional test cases for this ticket with steps and expected results.")} disabled={loading || chatContext.type !== 'ticket'}>
+                      Generate Chat Test Cases
+                   </button>
+                   {chatContext.type !== 'ticket' && <p style={{fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '8px'}}>Please induct a ticket first.</p>}
+                </div>
+              )}
+              {activeTool === 'risk' && (
+                <div className="tool-input-group">
+                   <button className="premium-btn" onClick={() => askAI("Perform a deep risk analysis for this ticket considering historical patterns.")} disabled={loading || chatContext.type !== 'ticket'}>
+                      Run Chat Risk Analysis
+                   </button>
+                   {chatContext.type !== 'ticket' && <p style={{fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '8px'}}>Please induct a ticket first.</p>}
+                </div>
+              )}
            </div>
         </aside>
 
-        <div className="chat-input-bar">
+        <div className="input-wrapper">
            <div className="input-container">
               <textarea 
-                placeholder={chatContext.type === 'ticket' ? `Discuss ${chatContext.issue_key}...` : "How can I help you analyze your project?"}
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), askAI())}
+                 placeholder={chatContext.type === 'ticket' ? `Message about ${chatContext.issue_key}...` : "Analyze your project metadata..."}
+                 value={question}
+                 onChange={(e) => {
+                    setQuestion(e.target.value);
+                    e.target.style.height = 'auto';
+                    e.target.style.height = e.target.scrollHeight + 'px';
+                 }}
+                 onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), askAI())}
+                 rows={1}
+                 style={{maxHeight: '200px'}}
               />
-              <button className="send-btn" onClick={() => askAI()} disabled={loading || !question.trim()}>
-                 <span className="arrow">↑</span>
+              <button className="circle-send" onClick={() => askAI()} disabled={loading || !question.trim()}>
+                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
               </button>
            </div>
-           <p className="input-hint">Jira AI can refine analysis based on your feedback. Just ask.</p>
+           <p className="bottom-hint">Jira AI Smart Platform v2.0 • Powered by Local RAG</p>
         </div>
       </main>
 
       {/* BUG MODAL */}
-      {isBugSidebarOpen && (
-        <div className="chat-modal-overlay" onClick={() => setIsBugSidebarOpen(false)}>
+      {isBugModalOpen && (
+        <div className="chat-modal-overlay" onClick={() => setIsBugModalOpen(false)}>
            <div className="chat-modal" onClick={e => e.stopPropagation()}>
               <div className="modal-top">
-                 <h3>Log Ticket</h3>
-                 <button onClick={() => setIsBugSidebarOpen(false)}>&times;</button>
+                 <h2 className="premium-font">Create Jira Ticket</h2>
+                 <button style={{background: 'none', border: 'none', color: 'white', fontSize: '1.5rem', cursor: 'pointer'}} onClick={() => setIsBugModalOpen(false)}>&times;</button>
               </div>
-              <div className="modal-fields">
-                 <div className="field">
-                    <label>Project</label>
-                    <input value={bugData.project} onChange={e => setBugData({...bugData, project: e.target.value})} />
-                 </div>
-                 <div className="field">
-                    <label>Summary</label>
-                    <input placeholder="Short description..." value={bugData.summary} onChange={e => setBugData({...bugData, summary: e.target.value})} />
-                 </div>
-                 <div className="field">
-                    <label>Context / Logs</label>
-                    <textarea rows="5" placeholder="Details..." value={bugData.raw} onChange={e => setBugData({...bugData, raw: e.target.value})} />
-                 </div>
-                 <button className="modal-submit" onClick={async () => {
+              <div className="tool-input-group">
+                 <input className="premium-input" placeholder="Project Key (e.g., EVR)" value={bugData.project} onChange={e => setBugData({...bugData, project: e.target.value})} />
+                 <input className="premium-input" placeholder="Issue Summary..." value={bugData.summary} onChange={e => setBugData({...bugData, summary: e.target.value})} />
+                 <textarea className="premium-input" rows="4" placeholder="Detailed logs or context..." value={bugData.raw} onChange={e => setBugData({...bugData, raw: e.target.value})} />
+                 <button className="premium-btn" onClick={async () => {
                     setIsLoggingBug(true);
                     try {
                        await fetch("http://localhost:8000/jira/log-bug", {
@@ -264,62 +357,98 @@ function App() {
                           headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({ project_key: bugData.project, summary: bugData.summary, raw_data: bugData.raw })
                        });
-                       alert("Ticket logged.");
-                       setIsBugSidebarOpen(false);
+                       alert("Ticket Logged.");
+                       setIsBugModalOpen(false);
                     } finally { setIsLoggingBug(false); }
-                 }} disabled={isLoggingBug}>{isLoggingBug ? "Processing..." : "Create Ticket"}</button>
+                 }} disabled={isLoggingBug}>{isLoggingBug ? "Creating..." : "Confirm & Create"}</button>
               </div>
            </div>
+        </div>
+      )}
+      {/* SYNC MODAL */}
+      {isSyncModalOpen && (
+        <div className="chat-modal-overlay">
+          <div className="chat-modal premium-modal" style={{maxWidth: '700px'}}>
+            <h3>📝 Final Review: Sync to Jira</h3>
+            <p style={{fontSize: '0.85rem', color: 'var(--text-dim)', marginBottom: '15px'}}>
+              Refine your message below before it's posted to <strong>{chatContext.issue_key}</strong>.
+            </p>
+            <textarea 
+              className="premium-input" 
+              style={{height: '300px', width: '100%', marginBottom: '20px', fontFamily: 'monospace', fontSize: '0.9rem', padding: '15px'}}
+              value={commentToSync}
+              onChange={(e) => setCommentToSync(e.target.value)}
+            />
+            <div className="modal-actions">
+              <button className="premium-btn secondary" onClick={() => setIsSyncModalOpen(false)}>Cancel</button>
+              <button className="premium-btn" onClick={confirmSync}>Post to Jira</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-// SHARED COMPONENTS
-function AnalyzerForm({ onFetch }) {
+function AnalyzerBox({ onFetch }) {
   const [id, setId] = useState("");
   const [loading, setLoading] = useState(false);
-  const runFetch = async () => {
+  const run = async () => {
     if (!id) return;
     setLoading(true);
     try {
       const res = await fetch(`http://localhost:8000/jira/tickets/${id}`);
       const data = await res.json();
       onFetch(id, data);
-    } catch (err) { alert("Ticket not found."); }
+    } catch (err) { alert("Not found."); }
     finally { setLoading(false); }
   };
   return (
-    <div className="inline-tool-form">
-       <input placeholder="EVR-123" value={id} onChange={e => setId(e.target.value)} />
-       <button onClick={runFetch} disabled={loading}>{loading ? "..." : "Induct"}</button>
+    <div className="tool-input-group">
+       <input className="premium-input" placeholder="Issue Key (e.g. EVR-12)" value={id} onChange={e => setId(e.target.value)} />
+       <button className="premium-btn" onClick={run} disabled={loading}>{loading ? "Fetching..." : "Induct Ticket"}</button>
     </div>
   );
 }
 
-function SimpleTool({ apiPath, resultKey, addAsComment }) {
+function QuickAction({ apiPath, resultKey, addAsComment, label }) {
   const [id, setId] = useState("");
   const [res, setRes] = useState("");
   const [loading, setLoading] = useState(false);
+  
   const run = async () => {
     if (!id) return;
     setLoading(true);
+    setRes(""); // Clear previous
     try {
-      const data = await (await fetch(`http://localhost:8000${apiPath}${id}`)).json();
-      setRes(data[resultKey]);
+      // Use the new /stream version of the endpoint
+      const response = await fetch(`http://localhost:8000${apiPath}stream/${id}`);
+      
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let cumulative = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        cumulative += decoder.decode(value, { stream: true });
+        setRes(cumulative);
+      }
     } catch (err) { alert("Error."); }
     finally { setLoading(false); }
   };
+  
   return (
-    <div className="inline-tool-form">
-       <input placeholder="Issue Key..." value={id} onChange={e => setId(e.target.value)} />
-       <button onClick={run} disabled={loading}>{loading ? "..." : "Run"}</button>
+    <div className="tool-input-group">
+       <input className="premium-input" placeholder="Issue Key..." value={id} onChange={e => setId(e.target.value)} />
+       <button className="premium-btn" onClick={run} disabled={loading}>{loading ? "Processing..." : label}</button>
        {res && (
-         <div className="tool-res-pop">
-            <div className="pop-scroll">{res}</div>
-            <button onClick={() => addAsComment(id, res)}>Sync to Jira</button>
-         </div>
+          <div style={{marginTop: '1rem', background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '16px', border: '1px solid var(--border)'}}>
+             <div style={{maxHeight: '300px', overflowY: 'auto', fontSize: '0.9rem', color: 'var(--text-main)', marginBottom: '15px', lineHeight: '1.6'}}>
+                <ReactMarkdown>{res}</ReactMarkdown>
+             </div>
+             <button className="premium-btn" style={{width: '100%', padding: '10px'}} onClick={() => addAsComment(id, res)}>Sync Result to Jira</button>
+          </div>
        )}
     </div>
   );

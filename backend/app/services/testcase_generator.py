@@ -4,43 +4,32 @@ from app.rag.search_service import search_similar_issues
 # from langchain_ollama import OllamaLLM
 # llm = OllamaLLM(model="qwen3:4b")
 
-def generate_testcases(ticket_text):
-    # 1. Get historical context from similar past issues
-    similar_issues = search_similar_issues(ticket_text)
+def get_testcase_prompt(ticket_text, history):
+    return f"""
+    You are a Senior QA Engineer. Generate a PRODUCTION-GRADE testing report.
+    Use ONLY JIRA WIKI MARKUP. 
     
-    history = "\n".join([
-        f"- Past Issue [{r.issue_key}] ({r.chunk_type}):\n  Content: {r.content[:300]}..."
-        for r in similar_issues
-    ])
-
-    prompt = f"""
-    You are a Senior QA Architect. 
-    Generate detailed, high-coverage test cases for the following new ticket.
+    ### STRICT UI RULES:
+    1. Use {{panel:title=SECTION_NAME|titleBGColor=#f4f5f7|borderStyle=solid}} for each main section.
+    2. Start each panel with a clear 'h2. Title' inside.
+    3. NO NESTING. No 'a.' or 'i.'. Use '*' for bullets.
+    4. NO INDENTATION. Start everything at the left.
+    5. Bold text using '*bold*'.
     
-    ----------------------------------------
-    CURRENT TICKET:
-    {ticket_text}
-    ----------------------------------------
-    
-    HISTORICAL CONTEXT (Similar past issues and bugs):
-    {history}
-    ----------------------------------------
-
-    Use the historical context to identify recurring failure patterns or specific areas that were buggy in the past.
-    
-    Include:
-    - Positive scenarios (Happy path)
-    - Negative scenarios (Error handling)
-    - Boundary & Edge cases
-    - Regression checks based on history
-    - Security & Performance considerations
-    
-    Structure the response professionally.
+    ### CONTENT:
+    - Ticket: {ticket_text}
+    - Context: {history}
     """
-    
-    response = llm.invoke(prompt)
-    # return response
-    return add_ai_stamp(response)
+
+def generate_testcases(ticket_text):
+    similar_issues = search_similar_issues(ticket_text)
+    history = "\n".join([f"[{r.issue_key}]: {r.content[:300]}" for r in similar_issues])
+    return ai_provider.generate_response(get_testcase_prompt(ticket_text, history))
+
+def stream_testcases(ticket_text):
+    similar_issues = search_similar_issues(ticket_text)
+    history = "\n".join([f"[{r.issue_key}]: {r.content[:300]}" for r in similar_issues])
+    return ai_provider.stream_response(get_testcase_prompt(ticket_text, history))
 # from openai import OpenAI
 # import os
 

@@ -2,6 +2,11 @@ from fastapi import FastAPI
 from app.integrations.jira_client import *
 from app.services.testcase_generator import generate_testcases
 from app.api.routes.ai_chat import router as ai_router
+import app.services.ai_provider as ai_provider
+from app.api.ai_knowledge import generate_llm_insight
+from app.services.risk_analyzer import analyze_risk
+from app.services.bug_logger import refine_bug_report
+from app.services.rag_chat_service import ask_ticket_chat
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import psutil
@@ -10,6 +15,7 @@ try:
 except ImportError:
     GPUtil = None
 
+
 app = FastAPI()
 
 app.add_middleware(
@@ -17,7 +23,7 @@ app.add_middleware(
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
 app.include_router(ai_router)
@@ -40,7 +46,6 @@ def home():
 
 @app.get("/system-info")
 def get_system_info():
-    import app.services.ai_provider as ai_provider
     cpu_usage = psutil.cpu_percent()
     ram_usage = psutil.virtual_memory().percent
     gpu_info = "N/A"
@@ -59,7 +64,6 @@ def get_system_info():
         "metrics": {"cpu": f"{cpu_usage}%", "ram": f"{ram_usage}%", "gpu": gpu_info}
     }
 
-from app.api.ai_knowledge import generate_llm_insight
 @app.get("/ai-knowledge")
 def get_ai_knowledge():
     insight = generate_llm_insight()
@@ -85,7 +89,6 @@ def comment(issue_key: str):
     add_comment(issue_key, testcases)
     return {"status": "comment added"}
 
-from app.services.risk_analyzer import analyze_risk
 @app.get("/risk-analysis/{issue_key}")
 def risk(issue_key: str):
     issue = get_issue(issue_key)
@@ -93,7 +96,6 @@ def risk(issue_key: str):
     analysis = analyze_risk(text)
     return {"issue": issue_key, "analysis": analysis}
 
-from app.services.bug_logger import refine_bug_report
 @app.post("/jira/log-bug")
 def log_bug(report: BugReport):
     refined_description = refine_bug_report(report.raw_data)
@@ -105,9 +107,38 @@ class TicketChatRequest(BaseModel):
     question: str
     ticket_details: str
 
+from fastapi.responses import StreamingResponse
+from app.services.rag_chat_service import ask_ticket_chat, stream_rag, stream_ticket_chat
+from app.services.testcase_generator import stream_testcases
+from app.services.risk_analyzer import stream_risk_analysis
+
+@app.post("/ask-ai/stream")
+def stream_ask_ai(data: dict):
+    question = data.get("question")
+    return StreamingResponse(stream_rag(question), media_type="text/plain")
+
+@app.post("/chat/ticket/stream")
+def stream_ticket_chat_api(request: TicketChatRequest):
+    return StreamingResponse(
+        stream_ticket_chat(request.issue_key, request.question, request.ticket_details),
+        media_type="text/plain"
+    )
+
+@app.get("/generate-testcases/stream/{issue_key}")
+async def stream_testcases_endpoint(issue_key: str):
+    # Call the local function defined in this file
+    ticket = get_ticket_details(issue_key)
+    ticket_text = f"Summary: {ticket['summary']}\nDescription: {ticket['description']}"
+    return StreamingResponse(stream_testcases(ticket_text), media_type="text/plain")
+
+@app.get("/risk-analysis/stream/{issue_key}")
+async def stream_risk_endpoint(issue_key: str):
+    ticket = get_ticket_details(issue_key)
+    ticket_text = f"Summary: {ticket['summary']}\nDescription: {ticket['description']}"
+    return StreamingResponse(stream_risk_analysis(ticket_text), media_type="text/plain")
+
 @app.post("/chat/ticket")
 def ticket_chat(request: TicketChatRequest):
-    from app.services.rag_chat_service import ask_ticket_chat
     return ask_ticket_chat(request.issue_key, request.question, request.ticket_details)
 
 

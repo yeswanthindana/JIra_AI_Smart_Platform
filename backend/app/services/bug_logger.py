@@ -20,5 +20,5 @@ def refine_bug_report(raw_data: str):
     # # return refined + stamp
     # return add_ai_stamp(refined)
     
-    refined = ai_provider.llm.invoke(prompt)
-    return ai_provider.add_ai_stamp(refined)
+    refined = ai_provider.generate_response(prompt)
+    return refined

@@ -7,83 +7,64 @@ from app.rag.search_service import search_similar_issues
 
 def ask_rag(question):
     results = search_similar_issues(question)
-    context = "\n\n".join([
-        f"""
-        Issue Key: {r.issue_key}
-        Chunk Type: {r.chunk_type}
-        Content:
-        {r.content}
-        """
-        for r in results
-    ])
+    context = "\n\n".join([f"[{r.issue_key}]: {r.content}" for r in results])
 
     prompt = f"""
-    You are an expert QA Architect.
-    Use the historical Jira knowledge below
-    to answer the question.
-    ----------------------------------------
-    HISTORICAL JIRA KNOWLEDGE:
+    You are a highly skilled Senior Technical Lead and QA Architect. 
+    A user is asking you a question about the project based on historical Jira data.
+    
+    ### HISTORICAL CONTEXT:
     {context}
-    ----------------------------------------
-    USER QUESTION:
+    
+    ### USER QUESTION:
     {question}
-    ----------------------------------------
-    Provide:
-    1. Detailed analysis
-    2. Historical patterns
-    3. Risk insights
-    4. Recommendations
-    5. QA considerations
+    
+    ### INSTRUCTIONS:
+    - Respond in a professional, helpful, and "human" tone. 
+    - Don't just list facts; provide analysis and connections between issues if applicable.
+    - If you don't know the answer based on the context, say so gracefully.
+    - Use Markdown for structure but keep it conversational.
     """
     response = ai_provider.generate_response(prompt)
     
     return {
         "answer": response,
-        "sources": [
-            {
-                "issue_key": r.issue_key,
-                "chunk_type": r.chunk_type,
-                "content": r.content[:300]
-            }
-            for r in results
-        ]
+        "sources": [{"issue_key": r.issue_key, "chunk_type": r.chunk_type, "content": r.content[:300]} for r in results]
     }
+
+def stream_rag(question):
+    results = search_similar_issues(question)
+    context = "\n\n".join([f"[{r.issue_key}]: {r.content}" for r in results])
+    prompt = f"Context: {context}\n\nQuestion: {question}\n\nAnswer in a conversational, professional tone as a Senior Lead."
+    return ai_provider.stream_response(prompt)
 
 def ask_ticket_chat(issue_key, question, ticket_details):
-    """
-    Focused chat regarding a specific ticket.
-    """
     rag_results = search_similar_issues(question)
-    rag_context = "\n".join([f"[{r.issue_key}]: {r.content[:200]}" for r in rag_results])
+    rag_context = "\n".join([f"[{r.issue_key}]: {r.content[:300]}" for r in rag_results])
 
     prompt = f"""
-    You are a Senior Technical Lead. 
-    You are currently analyzing JIRA TICKET: {issue_key}
+    You are an expert Engineer helping a teammate. Use standard JIRA WIKI MARKUP.
     
-    ----------------------------------------
-    CURRENT TICKET DETAILS:
+    ### CURRENT TICKET: {issue_key}
     {ticket_details}
-    ----------------------------------------
     
-    HISTORICAL CONTEXT (Similar issues):
-    {rag_context}
-    ----------------------------------------
+    ### HISTORY: {rag_context}
+    ### QUESTION: {question}
     
-    USER QUESTION ABOUT THIS TICKET:
-    {question}
-    
-    Instructions:
-    - Focus primarily on the Current Ticket Details.
-    - Use Historical Context to provide deeper insights or comparisons.
-    - Be precise and professional.
+    ### JIRA FORMATTING:
+    - Headers: 'h3. Header'
+    - Bold: '*text*'
+    - Lists: '* ' or '# '
+    - Tables: '||Header||' and '|Cell|'
     """
-    
     response = ai_provider.generate_response(prompt)
-    
     return {
         "answer": response,
-        "sources": [
-             {"issue_key": r.issue_key, "chunk_type": r.chunk_type, "content": r.content[:200]}
-             for r in rag_results
-        ]
+        "sources": [{"issue_key": r.issue_key, "chunk_type": r.chunk_type, "content": r.content[:200]} for r in rag_results]
     }
+
+def stream_ticket_chat(issue_key, question, ticket_details):
+    rag_results = search_similar_issues(question)
+    rag_context = "\n".join([f"[{r.issue_key}]: {r.content[:300]}" for r in rag_results])
+    prompt = f"Analyze {issue_key} with history: {rag_context}. Ticket info: {ticket_details}. Question: {question}. Respond naturally."
+    return ai_provider.stream_response(prompt)
